@@ -9,6 +9,7 @@ venv/
 data/*.parquet
 data/*.csv
 reports/*.png
+reports/*.html
 reports/*.joblib
 
 # OS / IDE

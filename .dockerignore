@@ -1,0 +1,11 @@
+.git
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/*.csv
+data/*.parquet
+reports/*.png
+reports/*.html
+reports/*.joblib
+.DS_Store

@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    image: financeagent:latest
+    container_name: financeagent
+    restart: unless-stopped
+    ports:
+      # 默认只绑定到本机回环, 由 Nginx 反代对外 (更安全)。
+      # 想直接公网访问改成 "8501:8501"。
+      - "127.0.0.1:8501:8501"
+    volumes:
+      # 持久化行情缓存与报告产物
+      - ./data:/app/data
+      - ./reports:/app/reports
+    environment:
+      - QUANT_DATA_DIR=/app/data
