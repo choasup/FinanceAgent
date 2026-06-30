@@ -22,8 +22,8 @@ def print_report(result: BacktestResult) -> None:
     print("=" * 60)
 
 
-def plot_report(result: BacktestResult, save: bool = True, show: bool = False) -> Path | None:
-    """绘制净值对比 + 回撤, 保存到 reports/ 并返回路径。"""
+def build_figure(result: BacktestResult):
+    """构建净值对比 + 回撤的 matplotlib Figure (供保存或内嵌)。"""
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=(11, 7), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
     )
@@ -42,6 +42,12 @@ def plot_report(result: BacktestResult, save: bool = True, show: bool = False) -
     ax2.grid(alpha=0.3)
 
     fig.tight_layout()
+    return fig
+
+
+def plot_report(result: BacktestResult, save: bool = True, show: bool = False) -> Path | None:
+    """绘制净值对比 + 回撤, 保存到 reports/ 并返回路径。"""
+    fig = build_figure(result)
     path = None
     if save:
         path = REPORT_DIR / f"{result.symbol}_{result.strategy}.png"
@@ -50,6 +56,18 @@ def plot_report(result: BacktestResult, save: bool = True, show: bool = False) -
         plt.show()
     plt.close(fig)
     return path
+
+
+def fig_to_base64(result: BacktestResult) -> str:
+    """把回测图渲染为 base64 PNG 字符串, 用于内嵌 HTML。"""
+    import base64
+    import io
+
+    fig = build_figure(result)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def compare_table(results: list[BacktestResult]) -> str:

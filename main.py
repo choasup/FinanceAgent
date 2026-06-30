@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--no-plot", action="store_true", help="不输出图表")
     ap.add_argument("--list-strategies", action="store_true", help="列出可用策略后退出")
     ap.add_argument("--ml", action="store_true", help="使用 ML 预测策略 (按标的各训一个模型)")
+    ap.add_argument("--html", action="store_true", help="生成自包含 HTML 仪表盘到 reports/dashboard.html")
     return ap.parse_args()
 
 
@@ -126,6 +127,12 @@ def main() -> None:
         print("多标的对比")
         print("=" * 60)
         print(report.compare_table(results))
+
+    if args.html and results:
+        from quant.dashboard import build_html
+
+        path = build_html(results)
+        print(f"\n[dashboard] HTML 仪表盘已生成: {path}  (浏览器直接打开)")
 
 
 if __name__ == "__main__":

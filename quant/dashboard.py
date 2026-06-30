@@ -1,0 +1,135 @@
+"""生成自包含的 HTML 回测仪表盘。
+
+把多个回测结果汇总成单个 HTML 文件: 图表内嵌为 base64, 指标做成卡片/表格,
+不依赖任何服务器, 双击即可在浏览器查看。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from .backtest import BacktestResult
+from .report import fig_to_base64
+
+REPORT_DIR = Path("reports")
+REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _fmt_pct(x: float) -> str:
+    return f"{x:.2%}"
+
+
+def _metric_cards(result: BacktestResult) -> str:
+    m = result.metrics
+    b = result.benchmark_metrics
+    # (标签, 策略值, 基准值, 越大越好?)
+    rows = [
+        ("累计收益", m.total_return, b.total_return, True),
+        ("年化收益", m.cagr, b.cagr, True),
+        ("夏普比率", m.sharpe, b.sharpe, True),
+        ("最大回撤", m.max_drawdown, b.max_drawdown, True),  # 越接近0越好, 数值越大越好
+        ("年化波动", m.ann_volatility, b.ann_volatility, False),
+        ("卡玛比率", m.calmar, b.calmar, True),
+    ]
+    cards = []
+    for label, sv, bv, higher_better in rows:
+        is_pct = label not in ("夏普比率", "卡玛比率")
+        sv_s = _fmt_pct(sv) if is_pct else f"{sv:.2f}"
+        bv_s = _fmt_pct(bv) if is_pct else f"{bv:.2f}"
+        win = (sv >= bv) if higher_better else (sv <= bv)
+        cls = "good" if win else "bad"
+        cards.append(
+            f'<div class="card"><div class="card-label">{label}</div>'
+            f'<div class="card-value {cls}">{sv_s}</div>'
+            f'<div class="card-bench">基准 {bv_s}</div></div>'
+        )
+    return '<div class="cards">' + "".join(cards) + "</div>"
+
+
+def _result_section(result: BacktestResult) -> str:
+    img = fig_to_base64(result)
+    period = f"{result.equity.index[0].date()} → {result.equity.index[-1].date()}"
+    return f"""
+    <section class="result">
+      <h2>{result.symbol} <span class="strat">{result.strategy}</span></h2>
+      <div class="meta">区间 {period} &nbsp;|&nbsp; 参数 {result.params} &nbsp;|&nbsp; 成交 {len(result.trades)} 次</div>
+      {_metric_cards(result)}
+      <img src="data:image/png;base64,{img}" alt="{result.symbol} 回测图"/>
+    </section>
+    """
+
+
+def _compare_section(results: list[BacktestResult]) -> str:
+    if len(results) < 2:
+        return ""
+    rows = ""
+    for r in results:
+        m = r.metrics
+        rows += (
+            f"<tr><td>{r.symbol}</td><td>{r.strategy}</td>"
+            f"<td>{_fmt_pct(m.cagr)}</td><td>{m.sharpe:.2f}</td>"
+            f"<td>{_fmt_pct(m.max_drawdown)}</td><td>{_fmt_pct(m.win_rate)}</td></tr>"
+        )
+    return f"""
+    <section class="result">
+      <h2>多标的对比</h2>
+      <table>
+        <thead><tr><th>标的</th><th>策略</th><th>年化</th><th>夏普</th><th>最大回撤</th><th>胜率</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+    """
+
+
+_CSS = """
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+       margin: 0; background: #0f1117; color: #e6e6e6; }
+header { padding: 28px 40px; background: linear-gradient(135deg,#1a1f2e,#232a3d);
+         border-bottom: 1px solid #2a3145; }
+header h1 { margin: 0; font-size: 24px; }
+header .sub { color: #8b94a7; margin-top: 6px; font-size: 13px; }
+main { padding: 24px 40px 60px; max-width: 1100px; margin: 0 auto; }
+.result { background: #161b26; border: 1px solid #242b3d; border-radius: 12px;
+          padding: 22px 24px; margin-bottom: 26px; }
+.result h2 { margin: 0 0 4px; font-size: 19px; }
+.strat { color: #5b9dff; font-size: 14px; font-weight: 500; margin-left: 8px; }
+.meta { color: #8b94a7; font-size: 12px; margin-bottom: 16px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr));
+         gap: 12px; margin-bottom: 18px; }
+.card { background: #1d2433; border-radius: 9px; padding: 12px 14px; }
+.card-label { font-size: 12px; color: #8b94a7; }
+.card-value { font-size: 22px; font-weight: 600; margin: 4px 0 2px; }
+.card-value.good { color: #3fd17b; } .card-value.bad { color: #ff6b6b; }
+.card-bench { font-size: 11px; color: #6b7388; }
+img { width: 100%; border-radius: 8px; margin-top: 6px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: right; padding: 9px 12px; border-bottom: 1px solid #242b3d; }
+th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+thead th { color: #8b94a7; font-weight: 500; }
+footer { text-align: center; color: #5a6072; font-size: 12px; padding: 20px; }
+"""
+
+
+def build_html(results: list[BacktestResult], out: str | Path = "reports/dashboard.html") -> Path:
+    """生成自包含 HTML 仪表盘, 返回文件路径。"""
+    results = [r for r in results if r is not None]
+    sections = _compare_section(results) + "".join(_result_section(r) for r in results)
+    n = len(results)
+    html = f"""<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>FinanceAgent 回测仪表盘</title>
+<style>{_CSS}</style></head>
+<body>
+<header>
+  <h1>📈 FinanceAgent 回测仪表盘</h1>
+  <div class="sub">{n} 个回测结果 &nbsp;·&nbsp; 绿色=跑赢买入持有基准 &nbsp;·&nbsp; 仅供研究, 不构成投资建议</div>
+</header>
+<main>{sections}</main>
+<footer>Generated by FinanceAgent</footer>
+</body></html>"""
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html, encoding="utf-8")
+    return out
