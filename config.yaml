@@ -1,0 +1,35 @@
+# FinanceAgent 回测配置 —— 改这里即可, 无需动代码
+# 运行: python main.py            (用本文件)
+#       python main.py --symbols AAPL MSFT --strategy momentum
+
+# 回测标的 (美股代码)
+symbols:
+  - AAPL
+  - MSFT
+  - NVDA
+  - SPY
+
+# 回测区间
+start: "2019-01-01"
+end: ""            # 留空 = 今天
+
+# 策略与参数 (策略名见 strategies/, 用 --list-strategies 查看)
+strategy: sma_cross
+params:
+  fast: 20
+  slow: 60
+
+# 资金 / 交易成本
+initial_cash: 100000
+commission: 0.0005   # 单边手续费率
+slippage: 0.0005     # 单边滑点率
+allow_short: false
+
+# 基本面选股 (可选): 回测前按 ROE/PE 过滤标的
+fundamental_screen:
+  enabled: false
+  min_roe: 0.10
+  max_pe: 40
+
+# 是否输出图表到 reports/
+plot: true
