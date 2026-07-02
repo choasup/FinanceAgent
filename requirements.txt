@@ -17,3 +17,6 @@ PyYAML>=6.0
 
 # Web 控制台 (交互式仪表盘)
 streamlit>=1.30
+
+# LLM Agent (可选): Claude 深度研究报告, 需 ANTHROPIC_API_KEY
+anthropic>=0.60

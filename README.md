@@ -15,11 +15,50 @@
 ```bash
 pip install -r requirements.txt
 
+# ---- Stock Agent: 给代码, 出结论 ----
+python agent.py AAPL                        # 单只多因子分析: 评级+依据+风险
+python agent.py AAPL MSFT NVDA SPY          # 多只分析 + 综合得分排序榜单
+python agent.py AAPL --json                 # 结构化 JSON 输出
+python agent.py AAPL --llm                  # Claude 深度研究报告 (需 ANTHROPIC_API_KEY)
+
+# ---- 回测流水线 ----
 python main.py                              # 按 config.yaml 跑全套
 python main.py --symbols AAPL MSFT NVDA     # 临时指定标的
 python main.py --strategy momentum          # 临时换策略
 python main.py --list-strategies            # 看有哪些策略
 python main.py --ml --symbols AAPL          # 训练 ML 模型并按其信号回测
+
+# ---- Web 控制台 ----
+streamlit run app.py                        # 交互式网页 (部署见 DEPLOY.md)
+```
+
+---
+
+## Stock Agent (不只是回测)
+
+`agent.py` 是分析代理入口: 给它股票代码, 它自动 **拉数据 → 算技术面 →
+跑回测验证信号有效性 → 查基本面 → 输出带评级的结论**。两层引擎:
+
+| 引擎 | 命令 | 特点 |
+|------|------|------|
+| 规则引擎 | `python agent.py AAPL` | 多因子打分 (趋势/动量/RSI/波动/回测验证/基本面), 离线可用, 零 API 依赖 |
+| LLM Agent | `python agent.py AAPL --llm` | Claude 自主调用工具集做深度研究, 输出完整中文报告 (需 `ANTHROPIC_API_KEY`) |
+
+两者共享同一套工具 (`quant/agent/tools.py`): 行情快照 / 技术指标 /
+回测验证 / 基本面。LLM Agent 的每个结论都必须引用工具返回的真实数字。
+
+规则引擎输出示例:
+
+```
+┌─ MSFT  (2026-06-30)
+│ 评级: 看多   综合得分: +45 / ±100
+│ 依据:
+│   + 价格位于200日均线上方 (+9.1%), 长期趋势向上
+│   + 50日均线在200日均线上方 (金叉形态)
+│   + 3个月动量 +16.5%, 中期走强
+│ 风险:
+│   ! 趋势策略历史回测未跑赢买入持有, 技术信号参考价值有限
+└─ 仅供研究, 不构成投资建议
 ```
 
 控制台打印绩效，图表（净值对比 + 回撤）输出到 `reports/`。
@@ -32,7 +71,8 @@ python main.py --ml --symbols AAPL          # 训练 ML 模型并按其信号回
 
 ```
 FinanceAgent/
-├── main.py              # 「一步到位」CLI 入口
+├── agent.py             # ★ Stock Agent 入口 (分析代理)
+├── main.py              # 回测流水线 CLI 入口
 ├── config.yaml          # 改这里即可调标的/策略/参数/成本
 ├── requirements.txt
 ├── quant/               # 核心框架
@@ -43,7 +83,11 @@ FinanceAgent/
 │   ├── metrics.py       # 绩效: 年化/夏普/索提诺/最大回撤/卡玛/胜率
 │   ├── report.py        # 文本报告 + matplotlib 图表
 │   ├── fundamentals.py  # 基本面数据 hook + ROE/PE 选股
-│   └── ml.py            # ML 预测模型 (训练/保存/部署为策略)
+│   ├── ml.py            # ML 预测模型 (训练/保存/部署为策略)
+│   └── agent/           # ★ Stock Agent
+│       ├── tools.py     #   共享工具集 (行情/指标/回测/基本面)
+│       ├── analyst.py   #   规则引擎: 多因子打分 -> 评级
+│       └── llm.py       #   LLM Agent: Claude tool-use 深度研究
 ├── strategies/          # 内置策略 (加新策略只需在这里加文件)
 │   ├── sma_cross.py     # 双均线交叉 (趋势)
 │   ├── rsi_reversion.py # RSI 均值回归
