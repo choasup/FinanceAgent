@@ -42,23 +42,36 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--end", help="结束日期 YYYY-MM-DD")
     ap.add_argument("--no-plot", action="store_true", help="不输出图表")
     ap.add_argument("--list-strategies", action="store_true", help="列出可用策略后退出")
-    ap.add_argument("--ml", action="store_true", help="使用 ML 预测策略 (按标的各训一个模型)")
+    ap.add_argument("--ml", action="store_true",
+                    help="ML 预测策略, walk-forward 滚动训练 (严格样本外, 较慢但诚实)")
+    ap.add_argument("--ml-insample", action="store_true",
+                    help="ML 样本内快速演示 (结果被高估, 仅看流程)")
     ap.add_argument("--html", action="store_true", help="生成自包含 HTML 仪表盘到 reports/dashboard.html")
     return ap.parse_args()
 
 
-def run_ml(symbol: str, df, engine, plot: bool):
-    """对单标的训练 ML 模型并回测。"""
-    from quant.ml import PricePredictor, MLStrategy
+def run_ml(symbol: str, df, engine, plot: bool, insample: bool = False):
+    """对单标的跑 ML 策略回测。默认 walk-forward (样本外); insample 仅演示。"""
+    if insample:
+        from quant.ml import PricePredictor, MLStrategy
 
-    predictor = PricePredictor(horizon=5, n_estimators=200, max_depth=3, random_state=42)
-    scores = predictor.fit(df)
-    print(f"[ml] {symbol} 训练完成: 训练准确率={scores['train_acc']:.2%} "
-          f"验证准确率={scores['test_acc']:.2%} (n_train={scores['n_train']})")
-    model_path = predictor.save(f"reports/{symbol}_model.joblib")
-    print(f"[ml] 模型已保存: {model_path}")
+        predictor = PricePredictor(horizon=5, n_estimators=200, max_depth=3, random_state=42)
+        scores = predictor.fit(df)
+        print(f"[ml] {symbol} 样本内训练: 训练准确率={scores['train_acc']:.2%} "
+              f"验证准确率={scores['test_acc']:.2%} (n_train={scores['n_train']})")
+        model_path = predictor.save(f"reports/{symbol}_model.joblib")
+        print(f"[ml] 模型已保存: {model_path}")
+        print("[ml] ⚠️ 样本内回测, 收益被高估; 诚实结果请用 --ml (walk-forward)")
+        strat = MLStrategy(predictor)
+    else:
+        from quant.ml import WalkForwardStrategy
 
-    result = engine.run(df, MLStrategy(predictor), symbol=symbol)
+        print(f"[ml] {symbol} walk-forward 滚动训练中 (每个信号严格样本外) ...")
+        strat = WalkForwardStrategy(
+            horizon=5, n_estimators=200, max_depth=3, random_state=42
+        )
+
+    result = engine.run(df, strat, symbol=symbol)
     report.print_report(result)
     if plot:
         p = report.plot_report(result)
@@ -106,9 +119,9 @@ def main() -> None:
         print(f"\n>>> 回测 {symbol} ...")
         df = data.load(symbol, start=start, end=end)
 
-        if args.ml:
+        if args.ml or args.ml_insample:
             try:
-                results.append(run_ml(symbol, df, engine, plot))
+                results.append(run_ml(symbol, df, engine, plot, insample=args.ml_insample))
             except Exception as exc:  # noqa: BLE001
                 print(f"[ml] {symbol} 失败: {exc}")
             continue

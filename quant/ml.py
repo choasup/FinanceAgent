@@ -120,7 +120,11 @@ class PricePredictor:
 
 
 class MLStrategy(Strategy):
-    """把预测器包装为回测策略: 上涨概率 > 阈值则做多。"""
+    """把预测器包装为回测策略: 上涨概率 > 阈值则做多。
+
+    ⚠️ 样本内版本: 模型在整段数据上训练后又在同一段预测, 回测收益被高估,
+    仅用于快速演示。诚实回测请用 WalkForwardStrategy。
+    """
 
     name = "ml_predictor"
 
@@ -131,4 +135,84 @@ class MLStrategy(Strategy):
 
     def generate_signals(self, df: pd.DataFrame) -> pd.Series:
         proba = self.predictor.predict_proba(df)
+        return (proba > self.threshold).astype(float).fillna(0.0)
+
+
+# ---- Walk-forward (滚动训练, 严格样本外) --------------------------------------
+
+
+def walk_forward_proba(
+    df: pd.DataFrame,
+    horizon: int = 5,
+    min_train: int = 400,
+    retrain_every: int = 60,
+    **model_kwargs,
+) -> pd.Series:
+    """滚动训练 + 样本外预测: 每个时点的预测只用该时点之前的数据训练。
+
+    流程: 从第 min_train 根 K 线起, 每 retrain_every 根重新训练一次模型
+    (训练集 = 起点到当前, 且剔除最近 horizon 根防止标签泄漏),
+    然后对接下来 retrain_every 根做预测。返回上涨概率 Series (样本外)。
+    """
+    from sklearn.ensemble import GradientBoostingClassifier
+
+    X = build_features(df)
+    y = make_label(df, horizon)
+    features = list(X.columns)
+    proba = pd.Series(np.nan, index=df.index)
+
+    n = len(df)
+    t = min_train
+    while t < n:
+        # 训练集: [0, t - horizon) —— 最后 horizon 根的标签会用到未来价格, 必须剔除
+        train_end = t - horizon
+        train = X.iloc[:train_end].join(y.iloc[:train_end].rename("label")).dropna()
+        if len(train) >= 50:
+            model = GradientBoostingClassifier(**model_kwargs)
+            model.fit(train[features], train["label"])
+            # 预测窗口: [t, t + retrain_every)
+            test = X.iloc[t : t + retrain_every].dropna()
+            if len(test) > 0:
+                proba.loc[test.index] = model.predict_proba(test[features])[:, 1]
+        t += retrain_every
+    return proba
+
+
+class WalkForwardStrategy(Strategy):
+    """Walk-forward ML 策略: 滚动训练, 每个信号都是严格样本外的。
+
+    这是 ML 回测的诚实版本 —— 结果远低于样本内版本是正常的,
+    因为它反映的才是真实可获得的表现。
+    """
+
+    name = "ml_walkforward"
+
+    def __init__(
+        self,
+        horizon: int = 5,
+        threshold: float = 0.55,
+        min_train: int = 400,
+        retrain_every: int = 60,
+        **model_kwargs,
+    ):
+        super().__init__(
+            horizon=horizon,
+            threshold=threshold,
+            min_train=min_train,
+            retrain_every=retrain_every,
+        )
+        self.horizon = horizon
+        self.threshold = threshold
+        self.min_train = min_train
+        self.retrain_every = retrain_every
+        self.model_kwargs = model_kwargs
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        proba = walk_forward_proba(
+            df,
+            horizon=self.horizon,
+            min_train=self.min_train,
+            retrain_every=self.retrain_every,
+            **self.model_kwargs,
+        )
         return (proba > self.threshold).astype(float).fillna(0.0)

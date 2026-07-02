@@ -26,10 +26,14 @@ python main.py                              # 按 config.yaml 跑全套
 python main.py --symbols AAPL MSFT NVDA     # 临时指定标的
 python main.py --strategy momentum          # 临时换策略
 python main.py --list-strategies            # 看有哪些策略
-python main.py --ml --symbols AAPL          # 训练 ML 模型并按其信号回测
+python main.py --ml --symbols AAPL          # ML 策略回测 (walk-forward, 严格样本外)
+
+# ---- 每日扫描 ----
+python scan.py                              # 扫 watchlist, 出榜单 + Markdown 报告
+                                            # (crontab 定时示例见 scan.py 头部注释)
 
 # ---- Web 控制台 ----
-streamlit run app.py                        # 交互式网页 (部署见 DEPLOY.md)
+streamlit run app.py                        # 交互式网页: Agent分析 + 回测 (部署见 DEPLOY.md)
 ```
 
 ---
@@ -169,9 +173,14 @@ model.save("reports/aapl_model.joblib")    # 部署落盘
 result = BacktestEngine().run(df, MLStrategy(model), symbol="AAPL")
 ```
 
-命令行一键：`python main.py --ml --symbols AAPL`
+命令行：
 
-> ⚠️ **关于 ML 回测结果的严肃提醒**：当前 `--ml` 为演示骨架，模型在**整段数据上训练后又在同一段上预测**（样本内），回测收益会被严重高估（你会看到训练准确率远高于验证准确率＝过拟合）。要得到诚实的结果，必须改成 **walk-forward / 滚动训练**：只用 `t` 时刻之前的数据训练，预测 `t` 之后。这是把它推向实盘前最重要的一步。
+```bash
+python main.py --ml --symbols AAPL           # walk-forward 滚动训练 (默认, 诚实)
+python main.py --ml-insample --symbols AAPL  # 样本内快速演示 (收益被高估)
+```
+
+> ✅ **`--ml` 默认就是 walk-forward**（`WalkForwardStrategy`）：每 60 根 K 线用截至当时的数据重新训练一次模型，训练集还会剔除最近 `horizon` 根防止标签泄漏——**每个信号都是严格样本外的**。实测对比（同一模型同一数据）：样本内 +3558% / 夏普 2.58，walk-forward -29% / 夏普 -0.20。前者是泄漏出来的假象，后者才是真实可获得的表现。测试 `test_walk_forward_no_prediction_before_min_train` 专门守这条无泄漏线。
 
 ---
 
