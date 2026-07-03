@@ -162,7 +162,61 @@ def _metric_row(result):
     cols[5].metric("日胜率", f"{m.win_rate:.1%}")
 
 
-# ---- 侧栏: 参数 --------------------------------------------------------------
+# ---- 页签 --------------------------------------------------------------------
+
+mode = st.sidebar.radio("模式", ["🤖 Agent 分析", "📈 策略回测"], horizontal=True)
+
+# ---- Agent 分析页 -------------------------------------------------------------
+
+if mode == "🤖 Agent 分析":
+    st.title("🤖 Stock Agent — 多因子分析")
+    st.caption("自动: 拉数据 → 技术面 → 回测验证信号 → 基本面 → 评级。仅供研究, 不构成投资建议。")
+
+    symbols_raw = st.text_input("标的代码 (逗号分隔)", value="AAPL, MSFT, NVDA, SPY")
+    with_fund = st.checkbox("包含基本面 (需联网, 稍慢)", value=False)
+
+    if st.button("🔍 开始分析", type="primary"):
+        from quant.agent.analyst import rank
+
+        syms = [s.strip().upper() for s in symbols_raw.split(",") if s.strip()]
+        with st.spinner(f"分析 {len(syms)} 个标的中..."):
+            verdicts = rank(syms, with_fundamentals=with_fund)
+
+        if len(verdicts) > 1:
+            st.subheader("📊 排序榜单")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "标的": v.symbol,
+                            "评级": v.rating,
+                            "得分": f"{v.score:+.0f}",
+                            "RSI": v.technicals.get("rsi14"),
+                            "3月动量": v.technicals.get("momentum_3m"),
+                            "距52周高": v.snapshot.get("pct_below_52w_high"),
+                        }
+                        for v in verdicts
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        for v in verdicts:
+            icon = {"强烈看多": "🟢", "看多": "🟢", "中性": "🟡", "看空": "🔴", "强烈看空": "🔴"}.get(v.rating, "⚪")
+            with st.expander(f"{icon} {v.symbol} — {v.rating} ({v.score:+.0f}分)", expanded=len(verdicts) == 1):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**依据**")
+                    for r in v.reasons or ["(无明显看多信号)"]:
+                        st.markdown(f"- ✅ {r}")
+                with col2:
+                    st.markdown("**风险**")
+                    for r in v.risks or ["(无明显风险信号)"]:
+                        st.markdown(f"- ⚠️ {r}")
+    st.stop()
+
+# ---- 回测页: 侧栏参数 ----------------------------------------------------------
 
 st.sidebar.title("⚙️ 回测参数")
 symbols_raw = st.sidebar.text_input("标的代码 (逗号分隔)", value="AAPL, MSFT")

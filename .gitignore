@@ -16,3 +16,4 @@ reports/*.joblib
 .DS_Store
 .idea/
 .vscode/
+reports/scan_*.md
