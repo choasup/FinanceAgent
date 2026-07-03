@@ -168,7 +168,7 @@ export default function WatchPage() {
         <h1 className="page-title">自选面板</h1>
         <p className="page-sub">
           {okCount}/{items.length} 只有数据{asOf ? ` · 行情截至 ${asOf} (日线)` : ''} ·
-          点卡片直达该股回测。仅供研究, 不构成投资建议。
+          点卡片进入个股页 (Agent 评级 + 回测)。仅供研究, 不构成投资建议。
         </p>
 
         {loading && <div className="notice">加载中…</div>}
@@ -178,7 +178,7 @@ export default function WatchPage() {
             <div
               key={it.symbol}
               className={`watch-card ${it.ok ? '' : 'dead'}`}
-              onClick={() => it.ok && !editing && router.push(`/backtest?symbols=${encodeURIComponent(it.symbol)}`)}
+              onClick={() => it.ok && !editing && router.push(`/stock/${encodeURIComponent(it.symbol)}`)}
             >
               {editing && (
                 <button className="remove" onClick={(e) => { e.stopPropagation(); remove(it.symbol); }}>
