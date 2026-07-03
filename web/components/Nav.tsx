@@ -8,15 +8,11 @@ export default function Nav() {
   return (
     <>
       <div className="brand">FINANCE&nbsp;AGENT</div>
+      {/* 最小化导航: 只留自选入口, 个股页承载回测+Agent。
+          批量对比页保留在 /backtest 与 /agent, 需要时直接访问 */}
       <nav className="nav">
         <Link href="/" className={path === '/' ? 'active' : ''}>
           自选
-        </Link>
-        <Link href="/backtest" className={path === '/backtest' ? 'active' : ''}>
-          回测
-        </Link>
-        <Link href="/agent" className={path === '/agent' ? 'active' : ''}>
-          Agent
         </Link>
       </nav>
     </>

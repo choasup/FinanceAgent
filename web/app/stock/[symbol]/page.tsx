@@ -22,6 +22,16 @@ type Result = {
   trades: (Trade & { cost: number })[];
 };
 
+type AnalyzeRow = {
+  strategy: string;
+  desc: string;
+  cagr: number | null;
+  max_drawdown: number | null;
+  sharpe: number | null;
+  calmar: number | null;
+  trades: number;
+};
+
 type Verdict = {
   symbol: string;
   as_of: string;
@@ -53,6 +63,8 @@ export default function StockPage({ params: routeParams }: { params: { symbol: s
   const [btLoading, setBtLoading] = useState(true);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [agentLoading, setAgentLoading] = useState(true);
+  const [fitRows, setFitRows] = useState<AnalyzeRow[]>([]);
+  const [bestStrat, setBestStrat] = useState('');
 
   const runBacktest = useCallback(
     async (strategy: string, stratParams: Record<string, number>) => {
@@ -86,12 +98,30 @@ export default function StockPage({ params: routeParams }: { params: { symbol: s
   );
 
   useEffect(() => {
-    // 串行: 策略元信息 → 自动回测 → Agent 评级 (并发网络抓取会压垮数据源)
+    // 串行: 策略元信息 → 全策略适配对比 → 用历史最优策略出详情 → Agent 评级
+    // (并发网络抓取会压垮数据源)
     (async () => {
       try {
         const list: StratMeta[] = await (await fetch('/api/strategies')).json();
         setStrats(list);
-        const def = list.find((s) => s.name === 'trend_vol') ?? list[0];
+
+        let bestName = 'trend_vol';
+        try {
+          const fit = await (
+            await fetch('/api/stock/analyze', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ symbol, start: '2019-01-01' }),
+            })
+          ).json();
+          setFitRows(fit.rows ?? []);
+          if (fit.best) bestName = fit.best;
+          setBestStrat(bestName);
+        } catch {
+          /* 适配表失败不阻塞详情 */
+        }
+
+        const def = list.find((s) => s.name === bestName) ?? list[0];
         if (def) {
           const p = Object.fromEntries(def.params.map((x) => [x.name, x.default]));
           setStratName(def.name);
@@ -230,6 +260,64 @@ export default function StockPage({ params: routeParams }: { params: { symbol: s
             <div style={{ color: 'var(--muted)', fontSize: 13.5 }}>Agent 分析不可用</div>
           )}
         </div>
+
+        {/* ---- 策略适配表 ---- */}
+        {fitRows.length > 0 && (
+          <>
+            <h2 className="symbol-title" style={{ marginTop: 22 }}>
+              策略适配<span>2019 至今, 这只票什么打法有效</span>
+            </h2>
+            <div className="table-wrap" style={{ marginBottom: 8 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>策略</th><th>年化收益</th><th>最大回撤</th><th>夏普</th><th>卡玛</th><th>交易次数</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fitRows.map((r) => {
+                    const isBest = r.strategy === bestStrat;
+                    const isBench = r.strategy === 'buy_hold';
+                    return (
+                      <tr
+                        key={r.strategy}
+                        title={r.desc}
+                        onClick={() => {
+                          if (isBench) return;
+                          const s = strats.find((x) => x.name === r.strategy);
+                          if (s) {
+                            const p = Object.fromEntries(s.params.map((x) => [x.name, x.default]));
+                            setStratName(s.name);
+                            setParams(p);
+                            runBacktest(s.name, p);
+                          }
+                        }}
+                        style={{
+                          cursor: isBench ? 'default' : 'pointer',
+                          background: isBest ? 'rgba(230,180,80,0.07)' : undefined,
+                        }}
+                      >
+                        <td>
+                          {isBench ? '🛋 买入持有' : r.strategy}
+                          {isBest && <span style={{ color: 'var(--gold)', marginLeft: 6 }}>★ 历史最优</span>}
+                        </td>
+                        <td>{r.cagr === null ? '—' : `${(r.cagr * 100).toFixed(1)}%`}</td>
+                        <td>{r.max_drawdown === null ? '—' : `${(r.max_drawdown * 100).toFixed(1)}%`}</td>
+                        <td>{r.sharpe === null ? '—' : r.sharpe.toFixed(2)}</td>
+                        <td>{r.calmar === null ? '—' : r.calmar.toFixed(2)}</td>
+                        <td>{r.trades}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="page-sub" style={{ marginBottom: 20 }}>
+              按"卡玛比率"(每承担一分回撤换多少年化收益) 选出历史最优; 点任意策略行查看它的详细回测。
+              买入持有跑赢全部策略时, 说明这只票过去更适合拿住不折腾。
+            </p>
+          </>
+        )}
 
         {/* ---- 回测 ---- */}
         {btError && <div className="error-box">{btError}</div>}

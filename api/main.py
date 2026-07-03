@@ -281,6 +281,63 @@ def watch_summary():
     return {"items": out}
 
 
+# ---- 个股深度分析: 全策略适配对比 -----------------------------------------------
+
+
+class AnalyzeReq(BaseModel):
+    symbol: str
+    start: str = "2019-01-01"
+    end: str | None = None
+
+
+@app.post("/api/stock/analyze")
+def stock_analyze(req: AnalyzeReq):
+    """对单只股票跑全部策略, 返回适配对比表和历史最优策略。
+
+    回答的问题: "这只票历史上什么打法有效, 还是躺平最好?"
+    """
+    symbol = req.symbol.strip().upper()
+    df = data.load(symbol, start=req.start, end=req.end or None, allow_synthetic=False)
+    engine = BacktestEngine()
+
+    rows = []
+    benchmark = None
+    for name in list_strategies():
+        try:
+            r = engine.run(df, get_strategy(name), symbol=symbol)
+            m = r.metrics
+            rows.append(
+                {
+                    "strategy": name,
+                    "desc": STRAT_DESC.get(name, ""),
+                    "cagr": _clean(m.cagr),
+                    "max_drawdown": _clean(m.max_drawdown),
+                    "sharpe": _clean(m.sharpe),
+                    "calmar": _clean(m.calmar),
+                    "trades": len(r.trades),
+                }
+            )
+            if benchmark is None:
+                b = r.benchmark_metrics
+                benchmark = {
+                    "strategy": "buy_hold",
+                    "desc": "买入后一直拿着不动 (基准)",
+                    "cagr": _clean(b.cagr),
+                    "max_drawdown": _clean(b.max_drawdown),
+                    "sharpe": _clean(b.sharpe),
+                    "calmar": _clean(b.calmar),
+                    "trades": 1,
+                }
+        except Exception:  # noqa: BLE001
+            continue
+
+    # 历史最优: 先看卡玛 (每单位回撤换多少收益), 全负时退回夏普
+    scored = [r for r in rows if r["calmar"] is not None]
+    best = max(scored, key=lambda r: r["calmar"])["strategy"] if scored else "trend_vol"
+    all_rows = ([benchmark] if benchmark else []) + rows
+    return {"symbol": symbol, "rows": all_rows, "best": best}
+
+
 class RankReq(BaseModel):
     symbols: list[str] = Field(min_length=1, max_length=20)
     with_fundamentals: bool = False
