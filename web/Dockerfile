@@ -11,7 +11,9 @@ FROM node:20-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
+# rewrites 在构建期固化, API 地址必须在 build 时注入 (compose 网络里是 http://api:8000)
+ARG API_URL=http://api:8000
+ENV API_URL=${API_URL} NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM node:20-alpine AS run
