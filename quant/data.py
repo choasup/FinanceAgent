@@ -79,25 +79,54 @@ def _synthetic(
     return df
 
 
-def _fetch_stooq(symbol: str, start: str, end: str) -> pd.DataFrame:
-    """备用免费数据源 stooq.com (日线, 无需 key, 基本不限流)。
+def _fetch_yfinance(symbol: str, start: str, end: str, period: str = "1d") -> pd.DataFrame:
+    """Yahoo Finance (海外网络可用; 国内服务器通常不通)。"""
+    try:
+        import yfinance as yf
 
-    美股代码需加 ``.us`` 后缀; 已带交易所后缀的代码 (如 ``0700.HK``) 原样尝试。
-    """
-    sym = symbol.lower()
-    candidates = [f"{sym}.us"] if "." not in sym else [sym]
-    d1 = start.replace("-", "")
-    d2 = end.replace("-", "")
-    for s in candidates:
-        url = f"https://stooq.com/q/d/l/?s={s}&d1={d1}&d2={d2}&i=d"
-        try:
-            raw = pd.read_csv(url, index_col=0, parse_dates=True)
-            if len(raw) > 0 and "Close" in raw.columns:
-                print(f"[data] {symbol}: 使用 stooq 数据源。")
-                return _normalize(raw)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[data] stooq 抓取 {s} 失败 ({exc})。")
+        raw = yf.download(
+            symbol, start=start, end=end, interval=period,
+            auto_adjust=True, progress=False,
+        )
+        if raw is not None and len(raw) > 0:
+            return _normalize(raw)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[data] yfinance 抓取 {symbol} 失败 ({exc})。")
     return pd.DataFrame()
+
+
+def _fetch_akshare(symbol: str, start: str, end: str, period: str = "1d") -> pd.DataFrame:
+    """akshare / 新浪财经 (国内直连, 美股+港股日线, 前复权)。"""
+    if period != "1d":
+        return pd.DataFrame()
+    try:
+        import akshare as ak
+
+        if symbol.upper().endswith(".HK"):
+            code = symbol.split(".")[0].zfill(5)
+            raw = ak.stock_hk_daily(symbol=code, adjust="qfq")
+        else:  # 其余按美股处理 (兼容 "AAPL" / "AAPL.US" / "BRK.B")
+            raw = ak.stock_us_daily(symbol=symbol.upper().removesuffix(".US"), adjust="qfq")
+        if raw is None or len(raw) == 0:
+            return pd.DataFrame()
+        raw = raw.set_index("date")
+        df = _normalize(raw)
+        df = df.loc[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
+        if len(df) > 0:
+            print(f"[data] {symbol}: 使用 akshare (新浪) 数据源。")
+        return df
+    except Exception as exc:  # noqa: BLE001
+        print(f"[data] akshare 抓取 {symbol} 失败 ({exc})。")
+    return pd.DataFrame()
+
+
+# 数据源尝试顺序, 可用环境变量覆盖 (国内服务器建议 "akshare,yfinance")
+DATA_SOURCES = [
+    s.strip()
+    for s in os.environ.get("QUANT_DATA_SOURCES", "yfinance,akshare").split(",")
+    if s.strip()
+]
+_FETCHERS = {"yfinance": _fetch_yfinance, "akshare": _fetch_akshare}
 
 
 def load(
@@ -107,6 +136,7 @@ def load(
     period: str = "1d",
     use_cache: bool = True,
     allow_synthetic: bool = True,
+    refresh: bool = False,
 ) -> pd.DataFrame:
     """加载单个标的的历史 OHLCV 数据。
 
@@ -123,7 +153,7 @@ def load(
     end = end or datetime.now().strftime("%Y-%m-%d")
     cache = _cache_path(symbol, period)
 
-    if use_cache and cache.exists():
+    if use_cache and not refresh and cache.exists():
         cached = pd.read_csv(cache, index_col=0, parse_dates=True)
         # 缓存必须覆盖请求区间才可用, 否则会拿部分数据冒充全量 (留 30 天容差)
         tol = pd.Timedelta(days=30)
@@ -140,24 +170,13 @@ def load(
                 return df
 
     df = pd.DataFrame()
-    try:
-        import yfinance as yf
-
-        raw = yf.download(
-            symbol,
-            start=start,
-            end=end,
-            interval=period,
-            auto_adjust=True,
-            progress=False,
-        )
-        if raw is not None and len(raw) > 0:
-            df = _normalize(raw)
-    except Exception as exc:  # noqa: BLE001 - 网络/解析错误统一回退
-        print(f"[data] yfinance 抓取 {symbol} 失败 ({exc}); 尝试回退。")
-
-    if len(df) < 10 and period == "1d":
-        df = _fetch_stooq(symbol, start, end)
+    for src in DATA_SOURCES:
+        fetcher = _FETCHERS.get(src)
+        if fetcher is None:
+            continue
+        df = fetcher(symbol, start, end, period)
+        if len(df) >= 10:
+            break
 
     if len(df) >= 10:
         # 只有真实行情才写缓存; 合成数据入缓存会永久污染后续回测

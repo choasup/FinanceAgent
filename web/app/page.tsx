@@ -82,11 +82,27 @@ export default function WatchPage() {
   const remove = (sym: string) =>
     saveList(items.filter((i) => i.symbol !== sym).map((i) => ({ symbol: i.symbol, name: i.name })));
 
-  const add = () => {
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = async (symbols?: string[]) => {
+    setRefreshing(true);
+    try {
+      await fetch('/api/watch/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbols: symbols ?? null }),
+      });
+    } finally {
+      setRefreshing(false);
+      reload();
+    }
+  };
+
+  const add = async () => {
     const sym = newSym.trim().toUpperCase();
     if (!sym || items.some((i) => i.symbol === sym)) return;
     setNewSym('');
-    saveList([...items.map((i) => ({ symbol: i.symbol, name: i.name })), { symbol: sym, name: sym }]);
+    await saveList([...items.map((i) => ({ symbol: i.symbol, name: i.name })), { symbol: sym, name: sym }]);
+    refresh([sym]); // 新标的立即拉行情
   };
 
   const shown = useMemo(() => {
@@ -132,8 +148,13 @@ export default function WatchPage() {
                    onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="代码" />
             <button className="btn-primary" style={{ width: 72 }} onClick={add}>加</button>
           </div>
-          <div className="hint">新标的需要行情数据入库后才会显示指标</div>
+          <div className="hint">添加后自动拉取行情 (美股代码 / 港股加 .HK)</div>
         </div>
+        <button className="btn-primary" onClick={() => refresh()} disabled={refreshing}
+                style={{ marginBottom: 10 }}>
+          {refreshing && <span className="spinner" />}
+          {refreshing ? '刷新中 (可能要几分钟)…' : '刷新全部行情'}
+        </button>
         <button
           className="btn-primary"
           style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--muted)', boxShadow: 'none' }}

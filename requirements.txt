@@ -3,8 +3,8 @@ pandas>=2.0
 numpy>=1.24
 
 # Data sources (open-source)
-yfinance>=0.2.40      # US/global equities
-# akshare>=1.13       # uncomment if you also want A-shares / 港股 data
+yfinance>=0.2.40      # US/global equities (海外网络)
+akshare>=1.13         # 新浪财经: 美股/港股/A股 (国内直连, 服务器主力数据源)
 
 # Plotting / reporting
 matplotlib>=3.7

@@ -214,6 +214,27 @@ def put_watchlist(req: WatchlistReq):
     return {"items": items}
 
 
+class RefreshReq(BaseModel):
+    symbols: list[str] | None = None  # 不传 = 刷新整个自选
+
+
+@app.post("/api/watch/refresh")
+def watch_refresh(req: RefreshReq):
+    """联网刷新自选行情缓存 (yfinance/akshare 按 QUANT_DATA_SOURCES 顺序)。"""
+    targets = [s.strip().upper() for s in (req.symbols or [i["symbol"] for i in _load_watchlist()]) if s.strip()]
+    start = (pd.Timestamp.now() - pd.Timedelta(days=430)).strftime("%Y-%m-%d")
+    ok, fail = [], []
+    for sym in targets:
+        try:
+            df = data.load(sym, start=start, refresh=True, allow_synthetic=False)
+            if len(df) < 10:
+                raise ValueError("数据太短")
+            ok.append(sym)
+        except Exception as exc:  # noqa: BLE001
+            fail.append({"symbol": sym, "error": str(exc)})
+    return {"ok": ok, "fail": fail}
+
+
 @app.get("/api/watch/summary")
 def watch_summary():
     """自选股面板数据: 只读本地行情缓存, 绝不联网、绝不用合成数据。"""

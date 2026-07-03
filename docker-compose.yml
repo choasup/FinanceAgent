@@ -16,6 +16,8 @@ services:
       - ./reports:/app/reports
     environment:
       - QUANT_DATA_DIR=/app/data
+      # 国内服务器: 优先 akshare (新浪), Yahoo 不通时不用干等
+      - QUANT_DATA_SOURCES=akshare,yfinance
 
   web:
     build:
