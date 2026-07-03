@@ -14,8 +14,11 @@
 from __future__ import annotations
 
 import inspect
+import json
 import math
+import os
 from dataclasses import asdict
+from pathlib import Path
 
 import pandas as pd
 from fastapi import FastAPI
@@ -174,6 +177,87 @@ def backtest(req: BacktestReq):
         except Exception as exc:  # noqa: BLE001
             errors.append({"symbol": symbol, "message": str(exc)})
     return {"results": results, "errors": errors}
+
+
+# ---- 自选股面板 ---------------------------------------------------------------
+
+WATCHLIST_PATH = Path(os.environ.get("QUANT_DATA_DIR", "data")) / "watchlist.json"
+
+
+def _load_watchlist() -> list[dict]:
+    if WATCHLIST_PATH.exists():
+        try:
+            return json.loads(WATCHLIST_PATH.read_text())
+        except Exception:  # noqa: BLE001
+            return []
+    return []
+
+
+@app.get("/api/watchlist")
+def get_watchlist():
+    return {"items": _load_watchlist()}
+
+
+class WatchlistReq(BaseModel):
+    items: list[dict] = Field(max_length=200)
+
+
+@app.put("/api/watchlist")
+def put_watchlist(req: WatchlistReq):
+    items = [
+        {"symbol": str(i.get("symbol", "")).strip().upper(), "name": str(i.get("name", ""))}
+        for i in req.items
+        if str(i.get("symbol", "")).strip()
+    ]
+    WATCHLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    WATCHLIST_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=1))
+    return {"items": items}
+
+
+@app.get("/api/watch/summary")
+def watch_summary():
+    """自选股面板数据: 只读本地行情缓存, 绝不联网、绝不用合成数据。"""
+    from quant.indicators import rsi as rsi_ind
+
+    out = []
+    for item in _load_watchlist():
+        sym, name = item["symbol"], item.get("name", "")
+        base = {"symbol": sym, "name": name}
+        try:
+            cache = data._cache_path(sym, "1d")
+            if not cache.exists():
+                raise FileNotFoundError("无本地行情数据 (待预取)")
+            df = pd.read_csv(cache, index_col=0, parse_dates=True).dropna()
+            if len(df) < 30:
+                raise ValueError("行情数据太短")
+            closes = df["close"]
+            last, prev = float(closes.iloc[-1]), float(closes.iloc[-2])
+
+            def ret(n: int) -> float | None:
+                return _clean(last / float(closes.iloc[-n - 1]) - 1) if len(closes) > n else None
+
+            sma200 = closes.rolling(200).mean().iloc[-1] if len(closes) >= 200 else None
+            hi52 = float(closes.tail(252).max())
+            spark = [round(float(v), 4) for v in closes.tail(60)]
+            out.append(
+                {
+                    **base,
+                    "ok": True,
+                    "as_of": closes.index[-1].strftime("%Y-%m-%d"),
+                    "price": round(last, 3),
+                    "chg_1d": _clean(last / prev - 1),
+                    "ret_1w": ret(5),
+                    "ret_1m": ret(21),
+                    "ret_3m": ret(63),
+                    "rsi14": _clean(round(float(rsi_ind(closes, 14).iloc[-1]), 1)),
+                    "above_sma200": bool(last > float(sma200)) if sma200 is not None and not math.isnan(sma200) else None,
+                    "pct_below_52w_high": _clean(last / hi52 - 1),
+                    "spark": spark,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            out.append({**base, "ok": False, "error": str(exc)})
+    return {"items": out}
 
 
 class RankReq(BaseModel):

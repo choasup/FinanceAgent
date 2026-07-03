@@ -10,10 +10,13 @@ export default function Nav() {
       <div className="brand">FINANCE&nbsp;AGENT</div>
       <nav className="nav">
         <Link href="/" className={path === '/' ? 'active' : ''}>
-          策略回测
+          自选
+        </Link>
+        <Link href="/backtest" className={path === '/backtest' ? 'active' : ''}>
+          回测
         </Link>
         <Link href="/agent" className={path === '/agent' ? 'active' : ''}>
-          Agent 分析
+          Agent
         </Link>
       </nav>
     </>

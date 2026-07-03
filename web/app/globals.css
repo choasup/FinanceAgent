@@ -131,6 +131,47 @@ td.sell { color: var(--down); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---- 自选面板 ---- */
+.watch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.watch-card {
+  position: relative;
+  background: linear-gradient(160deg, #1a2138, #131a2c);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.2s;
+}
+.watch-card:hover { transform: translateY(-2px); border-color: rgba(230, 180, 80, 0.45); }
+.watch-card.dead { opacity: 0.55; cursor: default; }
+.wc-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.wc-sym { font-size: 16px; font-weight: 800; }
+.wc-name { font-size: 11.5px; color: var(--muted); max-width: 120px;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wc-right { text-align: right; }
+.wc-price { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.wc-chg { font-size: 12.5px; font-weight: 600; }
+.spark { width: 100%; height: 36px; display: block; margin: 4px 0 8px; opacity: 0.9; }
+.wc-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip {
+  font-size: 10.5px; color: var(--muted);
+  background: rgba(154, 163, 184, 0.08);
+  border: 1px solid var(--border);
+  padding: 2px 7px; border-radius: 999px;
+  white-space: nowrap;
+}
+.wc-dead-msg { font-size: 12px; color: var(--muted); padding: 12px 0 6px; }
+.remove {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid rgba(248, 113, 113, 0.5); background: rgba(248, 113, 113, 0.12);
+  color: var(--bad); font-size: 11px; cursor: pointer; line-height: 1;
+}
+
 /* ---- Agent 评级 ---- */
 .verdict-card {
   background: var(--card); border: 1px solid var(--border);

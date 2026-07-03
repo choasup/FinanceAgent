@@ -1,89 +1,109 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Nav from '@/components/Nav';
-import MetricCards, { type Metrics } from '@/components/MetricCards';
-import CandleChart, { type Candle, type Trade } from '@/components/CandleChart';
-import EquityChart, { type Point } from '@/components/EquityChart';
 
-type StratParam = { name: string; label: string; help: string; type: 'int' | 'float'; default: number };
-type StratMeta = { name: string; desc: string; params: StratParam[] };
-
-type Result = {
+type WatchItem = {
   symbol: string;
-  strategy: string;
-  metrics: Metrics;
-  benchmark_metrics: Metrics;
-  candles: Candle[];
-  equity: Point[];
-  benchmark: Point[];
-  drawdown: Point[];
-  trades: (Trade & { cost: number })[];
+  name: string;
+  ok: boolean;
+  error?: string;
+  as_of?: string;
+  price?: number;
+  chg_1d?: number | null;
+  ret_1w?: number | null;
+  ret_1m?: number | null;
+  ret_3m?: number | null;
+  rsi14?: number | null;
+  above_sma200?: boolean | null;
+  pct_below_52w_high?: number | null;
+  spark?: number[];
 };
 
-export default function BacktestPage() {
-  const [strats, setStrats] = useState<StratMeta[]>([]);
-  const [stratName, setStratName] = useState('trend_vol');
-  const [params, setParams] = useState<Record<string, number>>({});
-  const [symbols, setSymbols] = useState('AAPL, MSFT');
-  const [start, setStart] = useState('2019-01-01');
-  const [end, setEnd] = useState('');
-  const [cash, setCash] = useState(100000);
-  const [commission, setCommission] = useState(0.0005);
-  const [slippage, setSlippage] = useState(0.0005);
+const pct = (v: number | null | undefined, digits = 1) =>
+  v === null || v === undefined ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(digits)}%`;
 
-  const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<Result[]>([]);
-  const [errors, setErrors] = useState<{ symbol: string; message: string }[]>([]);
-  const [ran, setRan] = useState(false);
+// A股习惯: 红涨绿跌
+const chgColor = (v: number | null | undefined) =>
+  v === null || v === undefined ? 'var(--muted)' : v >= 0 ? 'var(--up)' : 'var(--down)';
 
-  useEffect(() => {
-    fetch('/api/strategies')
-      .then((r) => r.json())
-      .then((list: StratMeta[]) => {
-        setStrats(list);
-        const def = list.find((s) => s.name === 'trend_vol') ?? list[0];
-        if (def) selectStrategy(def);
+function Spark({ values }: { values: number[] }) {
+  const d = useMemo(() => {
+    if (!values || values.length < 2) return '';
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min || 1;
+    return values
+      .map((v, i) => {
+        const x = (i / (values.length - 1)) * 120;
+        const y = 34 - ((v - min) / span) * 30;
+        return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
       })
-      .catch(() => setErrors([{ symbol: 'API', message: '无法连接后端服务' }]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      .join(' ');
+  }, [values]);
+  const up = values.length >= 2 && values[values.length - 1] >= values[0];
+  return (
+    <svg viewBox="0 0 120 36" className="spark" preserveAspectRatio="none">
+      <path d={d} fill="none" stroke={up ? 'var(--up)' : 'var(--down)'} strokeWidth="1.6" />
+    </svg>
+  );
+}
 
-  const selectStrategy = (s: StratMeta) => {
-    setStratName(s.name);
-    setParams(Object.fromEntries(s.params.map((p) => [p.name, p.default])));
+type SortKey = 'chg_1d' | 'ret_1m' | 'ret_3m' | 'pct_below_52w_high';
+
+export default function WatchPage() {
+  const router = useRouter();
+  const [items, setItems] = useState<WatchItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>('chg_1d');
+  const [filter, setFilter] = useState('');
+  const [newSym, setNewSym] = useState('');
+  const [editing, setEditing] = useState(false);
+
+  const reload = () => {
+    setLoading(true);
+    fetch('/api/watch/summary')
+      .then((r) => r.json())
+      .then((d) => setItems(d.items ?? []))
+      .finally(() => setLoading(false));
+  };
+  useEffect(reload, []);
+
+  const saveList = async (list: { symbol: string; name: string }[]) => {
+    await fetch('/api/watchlist', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: list }),
+    });
+    reload();
   };
 
-  const current = strats.find((s) => s.name === stratName);
+  const remove = (sym: string) =>
+    saveList(items.filter((i) => i.symbol !== sym).map((i) => ({ symbol: i.symbol, name: i.name })));
 
-  const run = useCallback(async () => {
-    setLoading(true);
-    setRan(true);
-    try {
-      const res = await fetch('/api/backtest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbols: symbols.split(',').map((s) => s.trim()).filter(Boolean),
-          strategy: stratName,
-          params,
-          start,
-          end: end || null,
-          initial_cash: cash,
-          commission,
-          slippage,
-        }),
-      });
-      const data = await res.json();
-      setResults(data.results ?? []);
-      setErrors(data.errors ?? []);
-    } catch {
-      setResults([]);
-      setErrors([{ symbol: 'API', message: '请求失败, 请检查后端服务' }]);
-    } finally {
-      setLoading(false);
-    }
-  }, [symbols, stratName, params, start, end, cash, commission, slippage]);
+  const add = () => {
+    const sym = newSym.trim().toUpperCase();
+    if (!sym || items.some((i) => i.symbol === sym)) return;
+    setNewSym('');
+    saveList([...items.map((i) => ({ symbol: i.symbol, name: i.name })), { symbol: sym, name: sym }]);
+  };
+
+  const shown = useMemo(() => {
+    const f = filter.trim().toUpperCase();
+    const list = items.filter(
+      (i) => !f || i.symbol.includes(f) || i.name.toUpperCase().includes(f),
+    );
+    return [...list].sort((a, b) => {
+      if (a.ok !== b.ok) return a.ok ? -1 : 1;
+      const av = (a[sortKey] as number | null | undefined) ?? -Infinity;
+      const bv = (b[sortKey] as number | null | undefined) ?? -Infinity;
+      return bv - av;
+    });
+  }, [items, sortKey, filter]);
+
+  const okCount = items.filter((i) => i.ok).length;
+  const asOf = items.find((i) => i.ok)?.as_of;
 
   return (
     <div className="shell">
@@ -91,155 +111,95 @@ export default function BacktestPage() {
         <Nav />
 
         <div className="field">
-          <label>标的代码 (逗号分隔)</label>
-          <input value={symbols} onChange={(e) => setSymbols(e.target.value)} placeholder="AAPL, MSFT" />
+          <label>筛选</label>
+          <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="代码 / 名称" />
         </div>
-
         <div className="field">
-          <label>策略</label>
-          <select
-            value={stratName}
-            onChange={(e) => {
-              const s = strats.find((x) => x.name === e.target.value);
-              if (s) selectStrategy(s);
-            }}
-          >
-            {strats.map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name}
-              </option>
-            ))}
+          <label>排序</label>
+          <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
+            <option value="chg_1d">今日涨跌</option>
+            <option value="ret_1m">近 1 月收益</option>
+            <option value="ret_3m">近 3 月收益</option>
+            <option value="pct_below_52w_high">距 52 周高点</option>
           </select>
-          {current?.desc && <div className="hint">{current.desc}</div>}
         </div>
 
-        {current && current.params.length > 0 && (
-          <>
-            <div className="section-label">策略参数</div>
-            {current.params.map((p) => (
-              <div className="field" key={p.name} title={p.help}>
-                <label>{p.label}</label>
-                <input
-                  type="number"
-                  step={p.type === 'float' ? 0.05 : 1}
-                  value={params[p.name] ?? p.default}
-                  onChange={(e) => setParams({ ...params, [p.name]: Number(e.target.value) })}
-                />
-                {p.help && <div className="hint">{p.help}</div>}
-              </div>
-            ))}
-          </>
-        )}
-
-        <div className="section-label">区间与成本</div>
-        <div className="row2">
-          <div className="field">
-            <label>起始</label>
-            <input value={start} onChange={(e) => setStart(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>结束 (空=今天)</label>
-            <input value={end} onChange={(e) => setEnd(e.target.value)} placeholder="YYYY-MM-DD" />
-          </div>
-        </div>
+        <div className="section-label">管理</div>
         <div className="field">
-          <label>初始资金</label>
-          <input type="number" step={10000} value={cash} onChange={(e) => setCash(Number(e.target.value))} />
-        </div>
-        <div className="row2">
-          <div className="field">
-            <label>手续费率</label>
-            <input type="number" step={0.0001} value={commission} onChange={(e) => setCommission(Number(e.target.value))} />
+          <label>添加标的 (如 NVDA / 0700.HK)</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={newSym} onChange={(e) => setNewSym(e.target.value)}
+                   onKeyDown={(e) => e.key === 'Enter' && add()} placeholder="代码" />
+            <button className="btn-primary" style={{ width: 72 }} onClick={add}>加</button>
           </div>
-          <div className="field">
-            <label>滑点率</label>
-            <input type="number" step={0.0001} value={slippage} onChange={(e) => setSlippage(Number(e.target.value))} />
-          </div>
+          <div className="hint">新标的需要行情数据入库后才会显示指标</div>
         </div>
-
-        <button className="btn-primary" onClick={run} disabled={loading}>
-          {loading && <span className="spinner" />}
-          {loading ? '回测中…' : '运行回测'}
+        <button
+          className="btn-primary"
+          style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--muted)', boxShadow: 'none' }}
+          onClick={() => setEditing(!editing)}
+        >
+          {editing ? '完成' : '编辑 (移除标的)'}
         </button>
       </aside>
 
       <main className="main">
-        <h1 className="page-title">策略回测</h1>
-        <p className="page-sub">左侧选标的 / 策略 / 参数, 一键回测。仅供研究, 不构成投资建议。</p>
+        <h1 className="page-title">自选面板</h1>
+        <p className="page-sub">
+          {okCount}/{items.length} 只有数据{asOf ? ` · 行情截至 ${asOf} (日线)` : ''} ·
+          点卡片直达该股回测。仅供研究, 不构成投资建议。
+        </p>
 
-        {errors.map((e) => (
-          <div className="error-box" key={e.symbol}>
-            <b>{e.symbol}</b>: {e.message}
-          </div>
-        ))}
+        {loading && <div className="notice">加载中…</div>}
 
-        {!ran && (
-          <div className="notice">
-            在左侧设置参数后点击 <b>运行回测</b>。K 线图上会标出每一次买卖:
-            红↑买入、绿↓卖出, 可滚轮缩放、拖动查看细节。
-          </div>
-        )}
-
-        {results.map((r) => {
-          const nBuy = r.trades.filter((t) => t.side === 'BUY').length;
-          return (
-            <section key={r.symbol}>
-              <h2 className="symbol-title">
-                {r.symbol}
-                <span>{r.strategy}</span>
-              </h2>
-              <MetricCards m={r.metrics} b={r.benchmark_metrics} />
-
-              <div className="chart-block">
-                <div className="chart-title">
-                  K线与买卖点 <span>— 共买入 {nBuy} 次、卖出 {r.trades.length - nBuy} 次 (红↑买 绿↓卖)</span>
+        <div className="watch-grid">
+          {shown.map((it) => (
+            <div
+              key={it.symbol}
+              className={`watch-card ${it.ok ? '' : 'dead'}`}
+              onClick={() => it.ok && !editing && router.push(`/backtest?symbols=${encodeURIComponent(it.symbol)}`)}
+            >
+              {editing && (
+                <button className="remove" onClick={(e) => { e.stopPropagation(); remove(it.symbol); }}>
+                  ✕
+                </button>
+              )}
+              <div className="wc-head">
+                <div>
+                  <div className="wc-sym">{it.symbol}</div>
+                  <div className="wc-name">{it.name}</div>
                 </div>
-                <div className="chart-box">
-                  <CandleChart candles={r.candles} trades={r.trades} />
-                </div>
+                {it.ok && (
+                  <div className="wc-right">
+                    <div className="wc-price">{it.price}</div>
+                    <div className="wc-chg" style={{ color: chgColor(it.chg_1d) }}>
+                      {pct(it.chg_1d)}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className="chart-block">
-                <div className="chart-title">
-                  资金曲线 <span>— 金线=策略, 蓝虚线=买入持有, 底部红色阴影=回撤</span>
-                </div>
-                <div className="chart-box">
-                  <EquityChart equity={r.equity} benchmark={r.benchmark} drawdown={r.drawdown} />
-                </div>
-              </div>
-
-              <details className="trades">
-                <summary>成交明细 ({r.trades.length} 笔)</summary>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>日期</th>
-                        <th>动作</th>
-                        <th>股数</th>
-                        <th>成交价</th>
-                        <th>费用</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {r.trades.map((t, i) => (
-                        <tr key={i}>
-                          <td>{t.date}</td>
-                          <td className={t.side === 'BUY' ? 'buy' : 'sell'}>
-                            {t.side === 'BUY' ? '买入' : '卖出'}
-                          </td>
-                          <td>{t.shares.toFixed(1)}</td>
-                          <td>{t.price.toFixed(2)}</td>
-                          <td>{t.cost.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </details>
-            </section>
-          );
-        })}
+              {it.ok ? (
+                <>
+                  {it.spark && <Spark values={it.spark} />}
+                  <div className="wc-chips">
+                    <span className="chip" style={{ color: chgColor(it.ret_1m) }}>1月 {pct(it.ret_1m, 0)}</span>
+                    <span className="chip" style={{ color: chgColor(it.ret_3m) }}>3月 {pct(it.ret_3m, 0)}</span>
+                    <span className="chip">RSI {it.rsi14 ?? '—'}</span>
+                    {it.above_sma200 !== null && (
+                      <span className="chip" style={{ color: it.above_sma200 ? 'var(--up)' : 'var(--down)' }}>
+                        {it.above_sma200 ? '200日线上' : '200日线下'}
+                      </span>
+                    )}
+                    <span className="chip">距高点 {pct(it.pct_below_52w_high, 0)}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="wc-dead-msg">{it.error ?? '暂无数据'}</div>
+              )}
+            </div>
+          ))}
+        </div>
       </main>
     </div>
   );
