@@ -1,13 +1,17 @@
 services:
   web:
-    build: .
+    build:
+      context: .
+      args:
+        # 国内服务器用腾讯云 PyPI 镜像加速; 海外构建可删掉此行用默认官方源
+        PIP_INDEX_URL: https://mirrors.cloud.tencent.com/pypi/simple
     image: financeagent:latest
     container_name: financeagent
     restart: unless-stopped
     ports:
       # 默认只绑定到本机回环, 由 Nginx 反代对外 (更安全)。
       # 想直接公网访问改成 "8501:8501"。
-      - "127.0.0.1:8501:8501"
+      - "8501:8501"
     volumes:
       # 持久化行情缓存与报告产物
       - ./data:/app/data

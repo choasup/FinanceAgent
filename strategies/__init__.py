@@ -4,4 +4,4 @@
 ``quant.get_strategy("sma_cross", fast=10, slow=30)`` 按名取用。
 """
 
-from . import sma_cross, rsi_reversion, momentum, macd_trend  # noqa: F401
+from . import sma_cross, rsi_reversion, momentum, macd_trend, trend_vol  # noqa: F401

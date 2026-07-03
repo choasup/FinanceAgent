@@ -79,6 +79,27 @@ def _synthetic(
     return df
 
 
+def _fetch_stooq(symbol: str, start: str, end: str) -> pd.DataFrame:
+    """备用免费数据源 stooq.com (日线, 无需 key, 基本不限流)。
+
+    美股代码需加 ``.us`` 后缀; 已带交易所后缀的代码 (如 ``0700.HK``) 原样尝试。
+    """
+    sym = symbol.lower()
+    candidates = [f"{sym}.us"] if "." not in sym else [sym]
+    d1 = start.replace("-", "")
+    d2 = end.replace("-", "")
+    for s in candidates:
+        url = f"https://stooq.com/q/d/l/?s={s}&d1={d1}&d2={d2}&i=d"
+        try:
+            raw = pd.read_csv(url, index_col=0, parse_dates=True)
+            if len(raw) > 0 and "Close" in raw.columns:
+                print(f"[data] {symbol}: 使用 stooq 数据源。")
+                return _normalize(raw)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[data] stooq 抓取 {s} 失败 ({exc})。")
+    return pd.DataFrame()
+
+
 def load(
     symbol: str,
     start: str = "2018-01-01",
@@ -103,10 +124,20 @@ def load(
     cache = _cache_path(symbol, period)
 
     if use_cache and cache.exists():
-        df = pd.read_csv(cache, index_col=0, parse_dates=True)
-        df = df.loc[(df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))]
-        if len(df) > 10:
-            return df
+        cached = pd.read_csv(cache, index_col=0, parse_dates=True)
+        # 缓存必须覆盖请求区间才可用, 否则会拿部分数据冒充全量 (留 30 天容差)
+        tol = pd.Timedelta(days=30)
+        covers = (
+            len(cached) > 10
+            and cached.index.min() <= pd.Timestamp(start) + tol
+            and cached.index.max() >= pd.Timestamp(end) - tol
+        )
+        if covers:
+            df = cached.loc[
+                (cached.index >= pd.Timestamp(start)) & (cached.index <= pd.Timestamp(end))
+            ]
+            if len(df) > 10:
+                return df
 
     df = pd.DataFrame()
     try:
@@ -125,15 +156,19 @@ def load(
     except Exception as exc:  # noqa: BLE001 - 网络/解析错误统一回退
         print(f"[data] yfinance 抓取 {symbol} 失败 ({exc}); 尝试回退。")
 
-    if len(df) < 10:
-        if not allow_synthetic:
-            raise RuntimeError(f"无法获取 {symbol} 的行情数据, 且未允许合成回退。")
-        print(f"[data] {symbol}: 使用合成数据 (离线回退)。")
-        df = _synthetic(symbol, start, end, period)
+    if len(df) < 10 and period == "1d":
+        df = _fetch_stooq(symbol, start, end)
 
-    if use_cache and len(df) > 0:
-        df.to_csv(cache)
-    return df
+    if len(df) >= 10:
+        # 只有真实行情才写缓存; 合成数据入缓存会永久污染后续回测
+        if use_cache:
+            df.to_csv(cache)
+        return df
+
+    if not allow_synthetic:
+        raise RuntimeError(f"无法获取 {symbol} 的行情数据, 且未允许合成回退。")
+    print(f"[data] {symbol}: 使用合成数据 (离线回退, 不入缓存)。")
+    return _synthetic(symbol, start, end, period)
 
 
 def load_many(

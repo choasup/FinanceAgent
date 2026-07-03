@@ -17,3 +17,5 @@ PyYAML>=6.0
 
 # Web 控制台 (交互式仪表盘)
 streamlit>=1.30
+altair>=4.0           # 价格+买卖点标记图 (降级备用)
+streamlit-lightweight-charts>=0.7   # TradingView 开源图表 (K线+买卖点)

@@ -11,8 +11,16 @@ from __future__ import annotations
 
 import inspect
 
+import altair as alt
 import pandas as pd
 import streamlit as st
+
+try:  # TradingView 开源图表库 (streamlit-lightweight-charts); 缺失时降级为 altair
+    from streamlit_lightweight_charts import renderLightweightCharts
+
+    HAS_TV = True
+except ImportError:  # pragma: no cover
+    HAS_TV = False
 
 from quant import data
 from quant.backtest import BacktestEngine
@@ -47,6 +55,100 @@ def _strategy_param_inputs(name: str) -> dict:
         else:
             params[pname] = st.sidebar.text_input(pname, value=str(default))
     return params
+
+
+def _tv_kline(df: pd.DataFrame, trades: pd.DataFrame, key: str) -> None:
+    """TradingView 风格 K 线 (红涨绿跌) + 买卖点箭头。"""
+    candles = [
+        {
+            "time": d.strftime("%Y-%m-%d"),
+            "open": float(o), "high": float(h), "low": float(l), "close": float(c),
+        }
+        for d, o, h, l, c in zip(df.index, df["open"], df["high"], df["low"], df["close"])
+    ]
+    markers = []
+    for _, t in trades.iterrows():
+        buy = t["side"] == "BUY"
+        markers.append(
+            {
+                "time": pd.Timestamp(t["date"]).strftime("%Y-%m-%d"),
+                "position": "belowBar" if buy else "aboveBar",
+                "color": "#ef232a" if buy else "#14b143",
+                "shape": "arrowUp" if buy else "arrowDown",
+                "text": f"{'买' if buy else '卖'} {t['price']:.2f}",
+            }
+        )
+    renderLightweightCharts(
+        [
+            {
+                "chart": {
+                    "height": 400,
+                    "layout": {"background": {"type": "solid", "color": "transparent"}},
+                    "timeScale": {"borderVisible": False},
+                    "rightPriceScale": {"borderVisible": False},
+                },
+                "series": [
+                    {
+                        "type": "Candlestick",
+                        "data": candles,
+                        "markers": markers,
+                        "options": {
+                            # A股习惯: 红涨绿跌
+                            "upColor": "#ef232a", "downColor": "#14b143",
+                            "borderUpColor": "#ef232a", "borderDownColor": "#14b143",
+                            "wickUpColor": "#ef232a", "wickDownColor": "#14b143",
+                        },
+                    }
+                ],
+            }
+        ],
+        key=key,
+    )
+
+
+def _price_trades_chart(df: pd.DataFrame, trades: pd.DataFrame) -> alt.Chart:
+    """价格走势 + 买卖点标记 (红▲买入 / 绿▼卖出)。"""
+    price_df = df[["close"]].reset_index()
+    price_df.columns = ["date", "close"]
+    line = (
+        alt.Chart(price_df)
+        .mark_line(color="#999", strokeWidth=1.5)
+        .encode(
+            x=alt.X("date:T", title=None),
+            y=alt.Y("close:Q", title="价格", scale=alt.Scale(zero=False)),
+        )
+    )
+    if not len(trades):
+        return line
+
+    t = trades.copy()
+    t["动作"] = t["side"].map({"BUY": "买入", "SELL": "卖出"})
+    t["数量"] = t["shares"].abs().round(1)
+    points = (
+        alt.Chart(t)
+        .mark_point(size=110, filled=True, opacity=0.9)
+        .encode(
+            x="date:T",
+            y=alt.Y("price:Q", scale=alt.Scale(zero=False)),
+            shape=alt.Shape(
+                "动作:N",
+                scale=alt.Scale(domain=["买入", "卖出"], range=["triangle-up", "triangle-down"]),
+                legend=alt.Legend(title=None, orient="top"),
+            ),
+            color=alt.Color(
+                "动作:N",
+                scale=alt.Scale(domain=["买入", "卖出"], range=["#d62728", "#2ca02c"]),
+                legend=alt.Legend(title=None, orient="top"),
+            ),
+            tooltip=[
+                alt.Tooltip("date:T", title="日期"),
+                alt.Tooltip("动作:N", title="动作"),
+                alt.Tooltip("price:Q", title="成交价", format=".2f"),
+                alt.Tooltip("数量:Q", title="股数"),
+            ],
+        )
+    )
+    return line + points
 
 
 def _metric_row(result):
@@ -99,14 +201,23 @@ for symbol in symbols:
     try:
         df = _load(symbol, start, end)
         strat: Strategy = get_strategy(strat_name, **params)
-        results.append(engine.run(df, strat, symbol=symbol))
+        results.append((engine.run(df, strat, symbol=symbol), df))
     except Exception as exc:  # noqa: BLE001
         st.error(f"{symbol} 回测失败: {exc}")
 
-for result in results:
+for result, df in results:
     st.subheader(f"{result.symbol} — {result.strategy}")
     _metric_row(result)
 
+    n_buy = int((result.trades["side"] == "BUY").sum()) if len(result.trades) else 0
+    n_sell = len(result.trades) - n_buy
+    st.markdown(f"**K线与买卖点** — 共买入 {n_buy} 次、卖出 {n_sell} 次 (红↑买入 绿↓卖出, 可缩放拖动)")
+    if HAS_TV:
+        _tv_kline(df, result.trades, key=f"tv_{result.symbol}")
+    else:
+        st.altair_chart(_price_trades_chart(df, result.trades), use_container_width=True)
+
+    st.markdown("**资金曲线** — 策略 vs 买入后一直拿着不动")
     equity_df = pd.DataFrame(
         {"策略": result.equity, "买入持有": result.benchmark}
     )
@@ -115,7 +226,12 @@ for result in results:
     with st.expander("回撤 / 成交明细"):
         st.area_chart(drawdown_series(result.equity).rename("回撤"), height=180)
         if len(result.trades):
-            st.dataframe(result.trades, use_container_width=True, height=240)
+            shown = result.trades.copy()
+            shown["side"] = shown["side"].map({"BUY": "买入", "SELL": "卖出"})
+            shown = shown.rename(
+                columns={"date": "日期", "side": "动作", "shares": "股数", "price": "成交价", "cost": "费用"}
+            )
+            st.dataframe(shown, use_container_width=True, height=240)
 
 if len(results) > 1:
     st.subheader("📊 多标的对比")
@@ -129,7 +245,7 @@ if len(results) > 1:
                 "最大回撤": f"{r.metrics.max_drawdown:.1%}",
                 "胜率": f"{r.metrics.win_rate:.1%}",
             }
-            for r in results
+            for r, _ in results
         ]
     )
     st.dataframe(table, use_container_width=True, hide_index=True)

@@ -58,11 +58,13 @@ class BacktestEngine:
         commission: float = 0.0005,   # 单边手续费率 (万5)
         slippage: float = 0.0005,     # 单边滑点率
         allow_short: bool = False,    # 是否允许做空
+        rebalance_band: float = 0.01, # 调仓带宽: 目标与实际仓位差超过该比例(占净值)才交易
     ):
         self.initial_cash = initial_cash
         self.commission = commission
         self.slippage = slippage
         self.allow_short = allow_short
+        self.rebalance_band = rebalance_band
 
     def run(self, df: pd.DataFrame, strategy: Strategy, symbol: str = "") -> BacktestResult:
         df = df.dropna(subset=["open", "close"]).copy()
@@ -94,7 +96,8 @@ class BacktestEngine:
             target_shares = target_value / price if price > 0 else 0.0
             delta = target_shares - shares
 
-            if abs(delta * price) > 1e-6 and t > 0:
+            # 带宽内的微小漂移不调仓, 避免每根 bar 产生碎单空耗手续费
+            if abs(delta * price) > self.rebalance_band * max(equity_now, 1e-9) and t > 0:
                 trade_value = abs(delta * price)
                 cost = trade_value * (self.commission + self.slippage)
                 # 买入: 现金减少; 卖出: 现金增加; 两者都扣成本

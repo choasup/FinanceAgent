@@ -4,6 +4,11 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 先装依赖 (利用缓存层)
+# PIP_INDEX_URL 可通过 build-arg 覆盖; 国内服务器建议用镜像源, 例如
+#   https://mirrors.cloud.tencent.com/pypi/simple
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_DEFAULT_TIMEOUT=120
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
