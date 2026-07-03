@@ -2,7 +2,9 @@
 
 把 FinanceAgent Web 控制台跑到你自己的服务器上。**推荐 Docker 方式**，最省心。
 
-> 形态：交互式 Web 控制台（Streamlit）。用途：**仅回测 / 分析**，不接交易接口。
+> 形态：Next.js 前端 (`web/`, 对外 8501) + FastAPI 数据后端 (`api/`, 仅内网 8000)，
+> `docker compose up -d --build` 一条命令起两个服务。用途：**仅回测 / 分析**，不接交易接口。
+> 旧版 Streamlit 控制台仍保留在 `app.py`（`streamlit run app.py` 可本地使用），但不再是部署形态。
 
 ---
 

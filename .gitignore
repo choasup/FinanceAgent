@@ -17,3 +17,5 @@ reports/*.joblib
 .idea/
 .vscode/
 reports/scan_*.md
+web/node_modules/
+web/.next/

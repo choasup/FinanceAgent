@@ -22,3 +22,7 @@ streamlit-lightweight-charts>=0.7   # TradingView 开源图表 (K线+买卖点)
 
 # LLM Agent (可选): Claude 深度研究报告, 需 ANTHROPIC_API_KEY
 anthropic>=0.60
+
+# REST API (Next.js 前端的数据后端)
+fastapi>=0.110
+uvicorn>=0.29
