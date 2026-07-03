@@ -37,6 +37,34 @@ def _load(symbol: str, start: str, end: str) -> pd.DataFrame:
     return data.load(symbol, start=start, end=end or None)
 
 
+# 策略一句话说明 (选中时显示在下拉框下方)
+STRAT_DESC = {
+    "trend_vol": "趋势跟踪+波动率控仓: 牛市跟涨、熊市空仓躲大跌 (推荐)",
+    "sma_cross": "双均线交叉: 快线上穿慢线买入, 下穿卖出, 经典入门",
+    "macd_trend": "MACD 趋势: 信号频繁, 手续费磨损大, 仅供对比",
+    "momentum": "动量: 近期涨得多就持有, 带长期均线过滤",
+    "rsi_reversion": "RSI 超卖反弹: 跌过头买入, 回到中位卖出",
+}
+
+# 参数中文标签与悬浮说明
+PARAM_LABELS = {
+    "fast": ("快线周期(日)", "短周期均线天数, 越小越灵敏"),
+    "slow": ("慢线周期(日)", "长周期均线天数"),
+    "signal": ("信号线周期(日)", "MACD 信号平滑天数"),
+    "window": ("计算窗口(日)", "指标回看的天数"),
+    "oversold": ("超卖阈值", "RSI 低于该值视为跌过头"),
+    "exit_level": ("离场阈值", "RSI 回到该值以上卖出"),
+    "lookback": ("动量回看(日)", "比较多少天前的价格"),
+    "trend_filter": ("趋势过滤均线(日)", "价格在该均线上方才允许持仓"),
+    "trend_window": ("趋势均线(日)", "收盘价站上该均线才持仓, 跌破清仓"),
+    "confirm_window": ("确认均线(日)", "该均线也需在趋势均线上方, 过滤假突破"),
+    "vol_window": ("波动率窗口(日)", "用最近多少天估算波动"),
+    "target_vol": ("目标年化波动", "市场越疯狂仓位越轻, 波动钉在此水平"),
+    "step": ("仓位档位", "仓位按该步长量化, 减少碎单"),
+    "rebalance_every": ("调仓间隔(日)", "持仓中最多隔多少天微调一次仓位"),
+}
+
+
 def _strategy_param_inputs(name: str) -> dict:
     """根据策略 __init__ 默认值动态渲染参数输入框。"""
     cls = get_strategy(name).__class__
@@ -46,14 +74,15 @@ def _strategy_param_inputs(name: str) -> dict:
         if pname in ("self",) or p.default is inspect.Parameter.empty:
             continue
         default = p.default
+        label, help_ = PARAM_LABELS.get(pname, (pname, None))
         if isinstance(default, bool):
-            params[pname] = st.sidebar.checkbox(pname, value=default)
+            params[pname] = st.sidebar.checkbox(label, value=default, help=help_)
         elif isinstance(default, int):
-            params[pname] = st.sidebar.number_input(pname, value=default, step=1)
+            params[pname] = st.sidebar.number_input(label, value=default, step=1, help=help_)
         elif isinstance(default, float):
-            params[pname] = st.sidebar.number_input(pname, value=float(default), step=0.5)
+            params[pname] = st.sidebar.number_input(label, value=float(default), step=0.05, help=help_, format="%.2f")
         else:
-            params[pname] = st.sidebar.text_input(pname, value=str(default))
+            params[pname] = st.sidebar.text_input(label, value=str(default), help=help_)
     return params
 
 
@@ -66,6 +95,8 @@ def _tv_kline(df: pd.DataFrame, trades: pd.DataFrame, key: str) -> None:
         }
         for d, o, h, l, c in zip(df.index, df["open"], df["high"], df["low"], df["close"])
     ]
+    # 交易太多时隐藏价格标签, 只留箭头 —— 否则文字互相覆盖, K 线不可读
+    show_text = len(trades) <= 40
     markers = []
     for _, t in trades.iterrows():
         buy = t["side"] == "BUY"
@@ -73,9 +104,9 @@ def _tv_kline(df: pd.DataFrame, trades: pd.DataFrame, key: str) -> None:
             {
                 "time": pd.Timestamp(t["date"]).strftime("%Y-%m-%d"),
                 "position": "belowBar" if buy else "aboveBar",
-                "color": "#ef232a" if buy else "#14b143",
+                "color": "#ef5350" if buy else "#26a69a",
                 "shape": "arrowUp" if buy else "arrowDown",
-                "text": f"{'买' if buy else '卖'} {t['price']:.2f}",
+                **({"text": f"{'买' if buy else '卖'} {t['price']:.2f}"} if show_text else {}),
             }
         )
     renderLightweightCharts(
@@ -83,7 +114,14 @@ def _tv_kline(df: pd.DataFrame, trades: pd.DataFrame, key: str) -> None:
             {
                 "chart": {
                     "height": 400,
-                    "layout": {"background": {"type": "solid", "color": "transparent"}},
+                    "layout": {
+                        "background": {"type": "solid", "color": "transparent"},
+                        "textColor": "#9AA3B8",
+                    },
+                    "grid": {
+                        "vertLines": {"color": "rgba(154,163,184,0.12)"},
+                        "horzLines": {"color": "rgba(154,163,184,0.12)"},
+                    },
                     "timeScale": {"borderVisible": False},
                     "rightPriceScale": {"borderVisible": False},
                 },
@@ -93,10 +131,10 @@ def _tv_kline(df: pd.DataFrame, trades: pd.DataFrame, key: str) -> None:
                         "data": candles,
                         "markers": markers,
                         "options": {
-                            # A股习惯: 红涨绿跌
-                            "upColor": "#ef232a", "downColor": "#14b143",
-                            "borderUpColor": "#ef232a", "borderDownColor": "#14b143",
-                            "wickUpColor": "#ef232a", "wickDownColor": "#14b143",
+                            # A股习惯: 红涨绿跌 (深色背景用柔和色阶)
+                            "upColor": "#ef5350", "downColor": "#26a69a",
+                            "borderUpColor": "#ef5350", "borderDownColor": "#26a69a",
+                            "wickUpColor": "#ef5350", "wickDownColor": "#26a69a",
                         },
                     }
                 ],
@@ -153,13 +191,29 @@ def _price_trades_chart(df: pd.DataFrame, trades: pd.DataFrame) -> alt.Chart:
 
 def _metric_row(result):
     m, b = result.metrics, result.benchmark_metrics
-    cols = st.columns(6)
-    cols[0].metric("累计收益", f"{m.total_return:.1%}", f"{m.total_return - b.total_return:.1%} vs 基准")
-    cols[1].metric("年化收益", f"{m.cagr:.1%}", f"{m.cagr - b.cagr:.1%}")
-    cols[2].metric("夏普比率", f"{m.sharpe:.2f}", f"{m.sharpe - b.sharpe:.2f}")
-    cols[3].metric("最大回撤", f"{m.max_drawdown:.1%}", f"{m.max_drawdown - b.max_drawdown:.1%}")
-    cols[4].metric("卡玛比率", f"{m.calmar:.2f}")
-    cols[5].metric("日胜率", f"{m.win_rate:.1%}")
+    cols = st.columns([1.4, 1.4, 1, 1, 1, 1])
+
+    # 主指标: 累计收益/最大回撤 vs 基准, 用人话表述
+    ret_gap = (m.total_return - b.total_return) * 100
+    ret_word = "跑赢" if ret_gap >= 0 else "落后"
+    cols[0].metric(
+        "累计收益", f"{m.total_return:.1%}",
+        f"{ret_gap:+.0f} 个百分点",
+        help=f"{ret_word}同期买入持有 {abs(ret_gap):.0f} 个百分点 (买入持有: {b.total_return:.1%})",
+    )
+    dd_gap = (m.max_drawdown - b.max_drawdown) * 100
+    dd_word = "更抗跌" if dd_gap >= 0 else "跌得更狠"
+    cols[1].metric(
+        "最大回撤", f"{m.max_drawdown:.1%}",
+        f"{dd_gap:+.0f} 个百分点",
+        help=f"比买入持有{dd_word} (买入持有最大回撤: {b.max_drawdown:.1%})",
+    )
+
+    # 次级指标: 不再堆红绿徽章
+    cols[2].metric("年化收益", f"{m.cagr:.1%}", help=f"买入持有: {b.cagr:.1%}")
+    cols[3].metric("夏普比率", f"{m.sharpe:.2f}", help=f"收益的风险性价比, >1 不错。买入持有: {b.sharpe:.2f}")
+    cols[4].metric("卡玛比率", f"{m.calmar:.2f}", help=f"年化收益/最大回撤, 越大越好。买入持有: {b.calmar:.2f}")
+    cols[5].metric("日胜率", f"{m.win_rate:.1%}", help="上涨交易日占比")
 
 
 # ---- 页签 --------------------------------------------------------------------
@@ -175,7 +229,15 @@ if mode == "🤖 Agent 分析":
     symbols_raw = st.text_input("标的代码 (逗号分隔)", value="AAPL, MSFT, NVDA, SPY")
     with_fund = st.checkbox("包含基本面 (需联网, 稍慢)", value=False)
 
+    if not st.session_state.get("_agent_ran"):
+        st.info(
+            "输入几只股票代码, 点 **开始分析**, 会得到: 每只股票的技术面体检 "
+            "(RSI / 动量 / 距 52 周高点)、回测验证过的信号、以及一个综合评级 "
+            "(🟢 看多 / 🟡 中性 / 🔴 看空) 排序榜单。约需 10~30 秒。"
+        )
+
     if st.button("🔍 开始分析", type="primary"):
+        st.session_state["_agent_ran"] = True
         from quant.agent.analyst import rank
 
         syms = [s.strip().upper() for s in symbols_raw.split(",") if s.strip()]
@@ -222,7 +284,14 @@ st.sidebar.title("⚙️ 回测参数")
 symbols_raw = st.sidebar.text_input("标的代码 (逗号分隔)", value="AAPL, MSFT")
 symbols = [s.strip().upper() for s in symbols_raw.split(",") if s.strip()]
 
-strat_name = st.sidebar.selectbox("策略", list_strategies())
+_strats = list_strategies()
+strat_name = st.sidebar.selectbox(
+    "策略",
+    _strats,
+    index=_strats.index("trend_vol") if "trend_vol" in _strats else 0,
+)
+if strat_name in STRAT_DESC:
+    st.sidebar.caption(f"ℹ️ {STRAT_DESC[strat_name]}")
 st.sidebar.caption("策略参数")
 params = _strategy_param_inputs(strat_name)
 

@@ -1,0 +1,13 @@
+# FinanceAgent 主题: 深色金融风
+[theme]
+base = "dark"
+primaryColor = "#E6B450"            # 金色强调 (按钮/选中态)
+backgroundColor = "#0D1220"         # 主背景: 深藏青
+secondaryBackgroundColor = "#161C2E" # 侧栏/卡片
+textColor = "#E8EAED"
+
+[client]
+toolbarMode = "minimal"             # 隐藏 Deploy 等开发工具栏
+
+[browser]
+gatherUsageStats = false
