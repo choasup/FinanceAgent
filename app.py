@@ -31,6 +31,77 @@ import strategies  # noqa: F401 -> 注册内置策略
 
 st.set_page_config(page_title="FinanceAgent 量化控制台", page_icon="📈", layout="wide")
 
+# ---- 全局样式 (卡片化指标 / 品牌头部 / 细节打磨) ---------------------------------
+
+st.markdown(
+    """
+<style>
+/* 中文字体栈 + 数字用等宽变体 */
+html, body, [data-testid="stAppViewContainer"] * {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+                 "Microsoft YaHei", "Helvetica Neue", sans-serif;
+}
+
+/* 指标卡片化: 有边框有底色, 不再是悬空数字 */
+[data-testid="stMetric"] {
+    background: linear-gradient(160deg, #1A2138 0%, #131A2C 100%);
+    border: 1px solid rgba(230, 180, 80, 0.14);
+    border-radius: 14px;
+    padding: 16px 18px 12px;
+}
+[data-testid="stMetric"] [data-testid="stMetricLabel"] p {
+    font-size: 0.82rem;
+    color: #8B93A7;
+    letter-spacing: 0.04em;
+}
+[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    font-variant-numeric: tabular-nums;
+    font-size: 1.55rem;
+    font-weight: 700;
+}
+[data-testid="stMetric"] [data-testid="stMetricDelta"] { font-size: 0.8rem; }
+
+/* 主按钮: 金色渐变胶囊 */
+button[kind="primary"] {
+    background: linear-gradient(135deg, #F0C060 0%, #D9A441 100%) !important;
+    color: #14181F !important;
+    font-weight: 700 !important;
+    border: none !important;
+    border-radius: 10px !important;
+    box-shadow: 0 4px 14px rgba(230, 180, 80, 0.25);
+}
+
+/* 侧栏: 收紧留白 */
+[data-testid="stSidebar"] .block-container { padding-top: 1.2rem; }
+
+/* 图表/表格容器圆角 */
+[data-testid="stDataFrame"], iframe {
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* 去掉标题的锚点链接图标 */
+[data-testid="stHeaderActionElements"] { display: none; }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+def _brand_header(title: str, subtitle: str) -> None:
+    """品牌化页头, 替代 emoji 大标题。"""
+    st.markdown(
+        f"""
+<div style="margin-bottom: 0.8rem">
+  <div style="font-size:.8rem; letter-spacing:.22em; font-weight:700;
+              color:#E6B450; margin-bottom:.15rem">FINANCE&nbsp;AGENT</div>
+  <div style="font-size:1.9rem; font-weight:800; line-height:1.25">{title}</div>
+  <div style="color:#8B93A7; font-size:.92rem; margin-top:.25rem">{subtitle}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
 
 @st.cache_data(show_spinner=False)
 def _load(symbol: str, start: str, end: str) -> pd.DataFrame:
@@ -223,8 +294,10 @@ mode = st.sidebar.radio("模式", ["🤖 Agent 分析", "📈 策略回测"], ho
 # ---- Agent 分析页 -------------------------------------------------------------
 
 if mode == "🤖 Agent 分析":
-    st.title("🤖 Stock Agent — 多因子分析")
-    st.caption("自动: 拉数据 → 技术面 → 回测验证信号 → 基本面 → 评级。仅供研究, 不构成投资建议。")
+    _brand_header(
+        "多因子分析",
+        "自动完成: 拉数据 → 技术面体检 → 回测验证信号 → 综合评级。仅供研究, 不构成投资建议。",
+    )
 
     symbols_raw = st.text_input("标的代码 (逗号分隔)", value="AAPL, MSFT, NVDA, SPY")
     with_fund = st.checkbox("包含基本面 (需联网, 稍慢)", value=False)
@@ -308,8 +381,10 @@ run = st.sidebar.button("🚀 运行回测", type="primary", use_container_width
 
 # ---- 主区 -------------------------------------------------------------------
 
-st.title("📈 FinanceAgent 量化回测控制台")
-st.caption("选标的 / 策略 / 参数 → 实时回测。仅供研究, 不构成投资建议。")
+_brand_header(
+    "策略回测",
+    "左侧选标的 / 策略 / 参数, 一键回测。仅供研究, 不构成投资建议。",
+)
 
 if not run:
     st.info("在左侧设置参数后点击 **🚀 运行回测**。")
