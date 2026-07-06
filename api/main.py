@@ -281,6 +281,39 @@ def watch_summary():
     return {"items": out}
 
 
+# ---- 模拟盘 (Paper Trading) -----------------------------------------------------
+
+
+@app.get("/api/paper")
+def paper_state():
+    from quant import paper
+
+    return paper.snapshot()
+
+
+@app.post("/api/paper/run")
+def paper_run():
+    """跑一轮模拟盘 (成交挂单 + 产生新信号)。由每日定时任务在行情刷新后调用。"""
+    from quant import paper
+
+    return paper.run_cycle()
+
+
+class PaperResetReq(BaseModel):
+    strategy: str | None = None
+    symbols: list[str] | None = None
+    initial_cash: float | None = None
+
+
+@app.post("/api/paper/reset")
+def paper_reset(req: PaperResetReq):
+    from quant import paper
+
+    cfg = {k: v for k, v in req.model_dump().items() if v is not None}
+    paper.init_state(cfg)
+    return paper.snapshot()
+
+
 # ---- 个股深度分析: 全策略适配对比 -----------------------------------------------
 
 

@@ -14,6 +14,9 @@ export default function Nav() {
         <Link href="/" className={path === '/' ? 'active' : ''}>
           自选
         </Link>
+        <Link href="/paper" className={path === '/paper' ? 'active' : ''}>
+          模拟盘
+        </Link>
       </nav>
     </>
   );
