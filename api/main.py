@@ -288,30 +288,27 @@ def watch_summary():
 def paper_state():
     from quant import paper
 
-    return paper.snapshot()
+    return {"accounts": paper.snapshots()}
 
 
 @app.post("/api/paper/run")
 def paper_run():
-    """跑一轮模拟盘 (成交挂单 + 产生新信号)。由每日定时任务在行情刷新后调用。"""
+    """跑一轮全部模拟盘账户。由每日定时任务在行情刷新后调用。"""
     from quant import paper
 
-    return paper.run_cycle()
+    return {"results": paper.run_all()}
 
 
 class PaperResetReq(BaseModel):
-    strategy: str | None = None
-    symbols: list[str] | None = None
-    initial_cash: float | None = None
+    account: str
 
 
 @app.post("/api/paper/reset")
 def paper_reset(req: PaperResetReq):
     from quant import paper
 
-    cfg = {k: v for k, v in req.model_dump().items() if v is not None}
-    paper.init_state(cfg)
-    return paper.snapshot()
+    paper.init_state(req.account)
+    return paper.snapshot(req.account)
 
 
 # ---- 个股深度分析: 全策略适配对比 -----------------------------------------------
