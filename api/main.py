@@ -368,6 +368,18 @@ def stock_analyze(req: AnalyzeReq):
     return {"symbol": symbol, "rows": all_rows, "best": best}
 
 
+class DeepReq(BaseModel):
+    symbol: str
+
+
+@app.post("/api/agent/deep")
+def agent_deep(req: DeepReq):
+    """单票深度研究档案: 因子记分卡 / 关键价位 / 风险画像 / 量能异动 / 相对强弱。"""
+    from quant.agent.deep import deep_analyze
+
+    return deep_analyze(req.symbol)
+
+
 class RankReq(BaseModel):
     symbols: list[str] = Field(min_length=1, max_length=20)
     with_fundamentals: bool = False

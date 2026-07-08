@@ -32,15 +32,26 @@ type AnalyzeRow = {
   trades: number;
 };
 
-type Verdict = {
+type Factor = { name: string; value: string; score: number; max: number; note: string };
+type Dossier = {
   symbol: string;
   as_of: string;
-  score: number | null;
+  price: number;
+  score: number;
   rating: string;
-  reasons: string[];
-  risks: string[];
-  technicals: Record<string, number | null>;
-  snapshot: Record<string, number | null>;
+  scorecard: Factor[];
+  ma: { alignment: string | null };
+  risk: {
+    vol20_ann: number;
+    vol_percentile_1y: number | null;
+    beta_vs_spy_1y: number | null;
+    drawdown_from_peak: number;
+    worst_day: { date: string; ret: number };
+  };
+  relative: Record<string, number | null>;
+  levels: Record<string, number | null>;
+  triggers: string[];
+  volume_events: { date: string; ret: number; vol_ratio: number }[];
 };
 
 const badgeClass = (rating: string) =>
@@ -61,7 +72,7 @@ export default function StockPage({ params: routeParams }: { params: { symbol: s
   const [result, setResult] = useState<Result | null>(null);
   const [btError, setBtError] = useState('');
   const [btLoading, setBtLoading] = useState(true);
-  const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [verdict, setVerdict] = useState<Dossier | null>(null);
   const [agentLoading, setAgentLoading] = useState(true);
   const [fitRows, setFitRows] = useState<AnalyzeRow[]>([]);
   const [bestStrat, setBestStrat] = useState('');
@@ -135,13 +146,13 @@ export default function StockPage({ params: routeParams }: { params: { symbol: s
       try {
         setAgentLoading(true);
         const d = await (
-          await fetch('/api/agent/rank', {
+          await fetch('/api/agent/deep', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ symbols: [symbol] }),
+            body: JSON.stringify({ symbol }),
           })
         ).json();
-        setVerdict(d.verdicts?.[0] ?? null);
+        setVerdict(d?.symbol ? d : null);
       } catch {
         setVerdict(null);
       } finally {
@@ -235,26 +246,74 @@ export default function StockPage({ params: routeParams }: { params: { symbol: s
         </h1>
         <p className="page-sub">Agent 评级与策略回测一站式视图。仅供研究, 不构成投资建议。</p>
 
-        {/* ---- Agent 评级 ---- */}
+        {/* ---- Agent 深度档案 ---- */}
         <div className="verdict-card">
           {agentLoading ? (
-            <div style={{ color: 'var(--muted)', fontSize: 13.5 }}>Agent 分析中 (拉数据 → 技术面 → 回测验证)…</div>
+            <div style={{ color: 'var(--muted)', fontSize: 13.5 }}>Agent 深度分析中 (因子记分 → 价位 → 风险画像)…</div>
           ) : verdict ? (
             <>
               <div className="verdict-head">
-                <span style={{ fontSize: 14, fontWeight: 700 }}>Agent 多因子分析</span>
-                <span style={{ color: 'var(--muted)', fontSize: 12.5 }}>{verdict.as_of}</span>
+                <span style={{ fontSize: 14, fontWeight: 700 }}>Agent 深度档案</span>
+                <span style={{ color: 'var(--muted)', fontSize: 12.5 }}>数据截至 {verdict.as_of}</span>
               </div>
-              <div className="verdict-cols">
+
+              <h4 style={{ fontSize: 12.5, color: 'var(--muted)', margin: '10px 0 6px' }}>因子记分卡 (每一分都可溯源)</h4>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>因子</th><th>取值</th><th>得分</th><th>说明</th></tr></thead>
+                  <tbody>
+                    {verdict.scorecard.map((f) => (
+                      <tr key={f.name}>
+                        <td>{f.name}</td>
+                        <td>{f.value}</td>
+                        <td style={{ color: f.score > 0 ? 'var(--up)' : f.score < 0 ? 'var(--down)' : 'var(--muted)' }}>
+                          {f.score > 0 ? '+' : ''}{f.score}/{f.max}
+                        </td>
+                        <td style={{ color: 'var(--muted)', fontSize: 12, textAlign: 'left' }}>{f.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="verdict-cols" style={{ marginTop: 14 }}>
                 <div>
-                  <h4>依据</h4>
-                  <ul>{(verdict.reasons.length ? verdict.reasons : ['(无明显看多信号)']).map((r, i) => <li key={i}>{r}</li>)}</ul>
+                  <h4>关键价位与信号</h4>
+                  <ul>
+                    <li>20日支撑 ${verdict.levels.support_20d} / 阻力 ${verdict.levels.resistance_20d}</li>
+                    {verdict.levels.sma50 && <li>50日均线 ${verdict.levels.sma50}</li>}
+                    {verdict.levels.sma200 && <li>200日均线 ${verdict.levels.sma200}</li>}
+                    <li>52周区间 ${verdict.levels.low_52w} ~ ${verdict.levels.high_52w}</li>
+                    {verdict.triggers.map((t, i) => <li key={i} style={{ color: 'var(--gold)' }}>{t}</li>)}
+                  </ul>
                 </div>
                 <div>
-                  <h4>风险</h4>
-                  <ul>{(verdict.risks.length ? verdict.risks : ['(无明显风险信号)']).map((r, i) => <li key={i}>{r}</li>)}</ul>
+                  <h4>风险画像</h4>
+                  <ul>
+                    <li>年化波动 {(verdict.risk.vol20_ann * 100).toFixed(0)}%
+                      {verdict.risk.vol_percentile_1y !== null && ` (一年 ${(verdict.risk.vol_percentile_1y * 100).toFixed(0)}% 分位)`}</li>
+                    {verdict.risk.beta_vs_spy_1y !== null && <li>贝塔 {verdict.risk.beta_vs_spy_1y} (大盘动 1% 它动 {verdict.risk.beta_vs_spy_1y}%)</li>}
+                    <li>距高点回撤 {(verdict.risk.drawdown_from_peak * 100).toFixed(0)}%</li>
+                    <li>最惨单日 {verdict.risk.worst_day.date} ({(verdict.risk.worst_day.ret * 100).toFixed(1)}%)</li>
+                    {verdict.relative.vs_SPY_3m !== undefined && verdict.relative.vs_SPY_3m !== null && (
+                      <li>3月跑{verdict.relative.vs_SPY_3m >= 0 ? '赢' : '输'}大盘 {(Math.abs(verdict.relative.vs_SPY_3m) * 100).toFixed(0)}%</li>
+                    )}
+                  </ul>
                 </div>
               </div>
+
+              {verdict.volume_events.length > 0 && (
+                <>
+                  <h4 style={{ fontSize: 12.5, color: 'var(--muted)', margin: '12px 0 6px' }}>量能异动事件日 (近90天, 放量&gt;2.5倍且波动&gt;5%)</h4>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {verdict.volume_events.map((e) => (
+                      <span key={e.date} className="chip" style={{ color: e.ret >= 0 ? 'var(--up)' : 'var(--down)' }}>
+                        {e.date} {e.ret >= 0 ? '+' : ''}{(e.ret * 100).toFixed(1)}% ({e.vol_ratio}x量)
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <div style={{ color: 'var(--muted)', fontSize: 13.5 }}>Agent 分析不可用</div>
