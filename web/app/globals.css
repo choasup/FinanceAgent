@@ -87,10 +87,37 @@ h1.page-title { font-size: 26px; font-weight: 800; margin-bottom: 4px; }
 .metric {
   background: linear-gradient(160deg, #1a2138, #131a2c);
   border: 1px solid rgba(230, 180, 80, 0.14);
-  border-radius: 14px; padding: 14px 16px 12px;
+  border-radius: 10px; padding: 10px 13px 9px;
 }
-.metric .label { font-size: 12px; color: var(--muted); letter-spacing: 0.04em; }
-.metric .value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.metric .label { font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em; }
+.metric .value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 1px; }
+
+/* ---- 回测战报条: 一眼看懂策略 vs 躺平 ---- */
+.battle {
+  display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr 1fr; gap: 0;
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  margin-bottom: 14px; background: var(--panel);
+}
+.battle > div { padding: 12px 16px; border-left: 1px solid var(--border); }
+.battle > div:first-child { border-left: none; }
+.battle .verdict-cell { display: flex; flex-direction: column; justify-content: center; }
+.battle .vtag { font-size: 11px; color: var(--muted); letter-spacing: 0.06em; margin-bottom: 3px; }
+.battle .vhead { font-size: 17px; font-weight: 800; line-height: 1.25; }
+.battle .vhead.win { color: var(--good); }
+.battle .vhead.lose { color: var(--bad); }
+.battle .col-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.battle .col-val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.battle .col-val.dim { color: var(--muted); font-weight: 600; }
+.battle-note {
+  font-size: 13px; color: var(--text); background: rgba(230,180,80,0.06);
+  border: 1px solid rgba(230,180,80,0.2); border-radius: 8px;
+  padding: 9px 13px; margin-bottom: 18px;
+}
+.battle-note b { color: var(--gold); }
+@media (max-width: 900px) {
+  .battle { grid-template-columns: 1fr 1fr; }
+  .battle .verdict-cell { grid-column: 1 / -1; border-bottom: 1px solid var(--border); }
+}
 .metric .delta { font-size: 12px; margin-top: 3px; }
 .metric .delta.good { color: var(--good); }
 .metric .delta.bad { color: var(--bad); }
@@ -109,7 +136,7 @@ details.trades { margin-top: 10px; }
 details.trades summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .table-wrap { overflow-x: auto; margin-top: 10px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { padding: 7px 12px; text-align: right; border-bottom: 1px solid var(--border); }
+th, td { padding: 5px 11px; text-align: right; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 600; }
 th:first-child, td:first-child { text-align: left; }
 td.buy { color: var(--up); }
@@ -175,7 +202,7 @@ td.sell { color: var(--down); }
 /* ---- Agent 评级 ---- */
 .verdict-card {
   background: var(--card); border: 1px solid var(--border);
-  border-radius: 14px; padding: 18px 20px; margin-bottom: 14px;
+  border-radius: 12px; padding: 14px 18px; margin-bottom: 14px;
 }
 .verdict-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
 .verdict-head .sym { font-size: 18px; font-weight: 800; }

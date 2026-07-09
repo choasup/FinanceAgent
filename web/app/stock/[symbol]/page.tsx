@@ -57,6 +57,54 @@ type Dossier = {
 const badgeClass = (rating: string) =>
   rating.includes('看多') ? 'bull' : rating.includes('看空') ? 'bear' : 'flat';
 
+const pctRet = (v: number | null) => (v === null ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(0)}%`);
+
+function BattleReport({ m, b, strat }: { m: Metrics; b: Metrics; strat: string }) {
+  const sr = m.total_return ?? 0;
+  const br = b.total_return ?? 0;
+  const gap = Math.round((sr - br) * 100);
+  const win = sr >= br;
+  // max_drawdown 是负数, 更接近 0 = 更抗跌
+  const ddBetter = (m.max_drawdown ?? 0) >= (b.max_drawdown ?? 0);
+  let note: React.ReactNode;
+  if (win) {
+    note = <>结论: <b>{strat} 跑赢了买入持有</b> —— 主动操作在这只票上历史有效, 值得进一步验证。</>;
+  } else if (ddBetter) {
+    note = <>结论: 策略<b>少赚但更抗跌</b> —— 牛市跟不上、下跌时护身, 属于"保险型"打法。</>;
+  } else {
+    note = <>结论: 策略<b>既没多赚、回撤也没更小</b> —— 这只票过去更适合买入后拿住, 别折腾。</>;
+  }
+  return (
+    <>
+      <div className="battle">
+        <div className="verdict-cell">
+          <span className="vtag">这个策略 VS 躺平不动</span>
+          <span className={`vhead ${win ? 'win' : 'lose'}`}>
+            {win ? '↑ 跑赢' : '↓ 跑输'} {Math.abs(gap)} 个百分点
+          </span>
+        </div>
+        <div>
+          <div className="col-label">策略累计</div>
+          <div className={`col-val ${win ? '' : ''}`} style={{ color: win ? 'var(--good)' : 'var(--text)' }}>{pctRet(m.total_return)}</div>
+        </div>
+        <div>
+          <div className="col-label">躺平累计</div>
+          <div className="col-val dim">{pctRet(b.total_return)}</div>
+        </div>
+        <div>
+          <div className="col-label">策略最大回撤</div>
+          <div className="col-val" style={{ color: ddBetter ? 'var(--good)' : 'var(--bad)' }}>{pctRet(m.max_drawdown)}</div>
+        </div>
+        <div>
+          <div className="col-label">躺平最大回撤</div>
+          <div className="col-val dim">{pctRet(b.max_drawdown)}</div>
+        </div>
+      </div>
+      <div className="battle-note">{note}</div>
+    </>
+  );
+}
+
 export default function StockPage({ params: routeParams }: { params: { symbol: string } }) {
   const symbol = decodeURIComponent(routeParams.symbol).toUpperCase();
 
@@ -385,23 +433,25 @@ export default function StockPage({ params: routeParams }: { params: { symbol: s
             <h2 className="symbol-title" style={{ marginTop: 22 }}>
               策略回测<span>{result.strategy}</span>
             </h2>
+
+            <BattleReport m={result.metrics} b={result.benchmark_metrics} strat={result.strategy} />
             <MetricCards m={result.metrics} b={result.benchmark_metrics} />
 
             <div className="chart-block">
               <div className="chart-title">
-                K线与买卖点 <span>— 共买入 {nBuy} 次、卖出 {result.trades.length - nBuy} 次 (红↑买 绿↓卖)</span>
+                资金曲线 <span>— 金线=按策略操作, 蓝虚线=一直拿着不动; 线越高越赚。底部红色=策略的回撤(离高点多远)</span>
               </div>
               <div className="chart-box">
-                <CandleChart candles={result.candles} trades={result.trades} />
+                <EquityChart equity={result.equity} benchmark={result.benchmark} drawdown={result.drawdown} />
               </div>
             </div>
 
             <div className="chart-block">
               <div className="chart-title">
-                资金曲线 <span>— 金线=策略, 蓝虚线=买入持有, 底部红色阴影=回撤</span>
+                K线与买卖点 <span>— 策略在这只票上的每一次操作: 红↑买入 绿↓卖出, 共 {nBuy} 买 {result.trades.length - nBuy} 卖</span>
               </div>
               <div className="chart-box">
-                <EquityChart equity={result.equity} benchmark={result.benchmark} drawdown={result.drawdown} />
+                <CandleChart candles={result.candles} trades={result.trades} />
               </div>
             </div>
 
