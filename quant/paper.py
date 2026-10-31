@@ -10,6 +10,8 @@
 
 统一语义: 挂单的 target_weight 一律指 **占账户总净值的比例**。
 状态持久化在 ``data/paper/<account>.json``。仅供研究, 不连接任何真实账户。
+要把挂单目标权重送进 Order Gate（再可选提交券商），调用
+``quant.execution.route_paper_state``。默认 advice + 本地队列，不会实盘下单。
 """
 
 from __future__ import annotations

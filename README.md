@@ -88,16 +88,22 @@ FinanceAgent/
 │   ├── report.py        # 文本报告 + matplotlib 图表
 │   ├── fundamentals.py  # 基本面数据 hook + ROE/PE 选股
 │   ├── ml.py            # ML 预测模型 (训练/保存/部署为策略)
+│   ├── paper.py         # 本地模拟盘 (不连券商)
+│   ├── execution.py     # 模拟盘/策略权重 → Order Gate (可选)
 │   └── agent/           # ★ Stock Agent
 │       ├── tools.py     #   共享工具集 (行情/指标/回测/基本面)
 │       ├── analyst.py   #   规则引擎: 多因子打分 -> 评级
 │       └── llm.py       #   LLM Agent: Claude tool-use 深度研究
+├── position_agent/      # ★ Order Gate + 券商适配器
+│   ├── core.py          #   规则引擎、状态机、OrderGate
+│   ├── bridge.py        #   目标权重 → Intent/Snapshot → Gate
+│   └── brokers/         #   Futu / Longbridge / 平安 (默认模拟)
 ├── strategies/          # 内置策略 (加新策略只需在这里加文件)
 │   ├── sma_cross.py     # 双均线交叉 (趋势)
 │   ├── rsi_reversion.py # RSI 均值回归
 │   ├── momentum.py      # 时序动量 + 长均线过滤
 │   └── macd_trend.py    # MACD 趋势
-└── tests/               # 冒烟测试 (合成数据, 不联网)
+└── tests/               # 冒烟测试 (合成数据 / mock 券商, 不联网)
 ```
 
 ---
@@ -194,6 +200,94 @@ python -m pytest tests/ -q
 
 ---
 
+## Order Gate 与券商适配器
+
+策略意图要下单时，走 `position_agent`：规则引擎算仓并拦截违规单，Order Gate
+按 `advice` / `confirm` / `auto` / `kill` 决定是否提交。`BrokerAdapter.submit`
+只返回 `submitted|partial|filled|rejected`，柜台拒单或结果不明时不盲重试
+（`BROKER_REJECTED` / `BROKER_UNKNOWN`）。
+
+`quant.paper` 仍然只做本地虚拟成交，不会因为这次接入去打券商。连接点是
+`quant.execution.route_paper_state` / `route_targets`：把目标权重转成
+`Intent` + 账户 `Snapshot`，再交给 Gate。默认 `advice` + 内存队列。
+
+```bash
+python -m pytest tests/ -q          # 含 Gate / mock 券商 / 原有回测测试
+python -m position_agent --mode advice
+python -m position_agent --mode confirm
+python -m position_agent --mode auto
+python -m position_agent --mode kill
+python -m position_agent --paper-signal --mode advice   # 合成策略权重，不联网
+```
+
+`--paper-signal` 用两笔合成目标：AAPL 权重 20% 可通过校验；MSFT 权重 50%
+会被 `MAX_SYMBOL_WEIGHT` 拒绝。`advice` 只校验不下单，`auto` 才把通过的单
+放进本地队列。演示和测试都不会连接 OpenD 或长桥。
+
+把模拟盘挂单送进 Gate（仍默认不下单）：
+
+```python
+from decimal import Decimal
+from quant.execution import route_paper_state
+
+# state 即 quant.paper 落盘的账户 dict；prices 由调用方提供，避免在这里拉行情
+orders = route_paper_state(
+    state,
+    {"AAPL": Decimal("190")},
+    mode="advice",          # 改成 "auto" 才会 submit
+    broker=None,            # None = 本地队列；"futu" / "longbridge" / "pingan"
+)
+```
+
+直接把策略目标权重送进去：
+
+```python
+from quant.execution import route_targets
+
+route_targets(
+    {"AAPL": "0.20"},
+    equity="10000",
+    prices={"AAPL": "100"},
+    mode="auto",
+    broker=None,
+)
+```
+
+`broker="futu"` 时适配器默认 `FUTU_TRD_ENV=SIMULATE`（本机 OpenD）。
+`broker="longbridge"` 默认纸交易。`broker="pingan"` 在没有
+`PINGAN_QMT_BRIDGE_URL` 时 `submit` 返回拒绝，原因码 `BROKER_NOT_CONFIGURED`。
+桥接入口默认拒绝富途 `REAL` 和长桥 `LONGBRIDGE_PAPERTRADING=false`；
+确需实盘时由调用方显式传 `allow_live=True`，测试和演示不要这样做。
+
+可选 SDK（不装也能跑测试和纸面路径）：
+
+```bash
+pip install futu-api            # 或 pip install -e ".[futu]"
+pip install longbridge          # 或 pip install -e ".[longbridge]"
+```
+
+| 环境变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `FUTU_OPEND_HOST` | `127.0.0.1` | 富途 OpenD 地址 |
+| `FUTU_OPEND_PORT` | `11111` | OpenD 端口 |
+| `FUTU_TRD_ENV` | `SIMULATE` | `REAL` 才是实盘 |
+| `FUTU_UNLOCK_PASSWORD` | 空 | 仅 `REAL` 时解锁，勿写入仓库 |
+| `LONGBRIDGE_APP_KEY` | 空 | 长桥 App Key |
+| `LONGBRIDGE_APP_SECRET` | 空 | 长桥 App Secret |
+| `LONGBRIDGE_ACCESS_TOKEN` | 空 | 长桥 Access Token |
+| `LONGBRIDGE_PAPERTRADING` | `true` | `false` 才关闭纸交易 |
+| `PINGAN_QMT_BRIDGE_URL` | 空 | 未设置则 `BROKER_NOT_CONFIGURED` |
+
+平安没有公开零售下单 SDK。设置 `PINGAN_QMT_BRIDGE_URL` 后，适配器向私有
+QMT sidecar 发 JSON：`POST /place_order`（`client_order_id`、`symbol`、
+`side`、`price`、`quantity`，后两者为十进制字符串；返回 `status`）、
+`POST /cancel`、`POST /positions`。超时 10 秒，不重试。
+
+富途代码形如 `US.AAPL`，长桥形如 `AAPL.US`。止损只参与风控算仓，不会自动
+在券商侧挂保护单。OpenD 实盘连通属于手工步骤，不在 CI / 演示里执行。
+
+---
+
 ## 路线图 / 下一步建议
 
 按优先级，把它从「能回测」推向「能实战」：
@@ -202,8 +296,8 @@ python -m pytest tests/ -q
 2. **参数优化 + 防过拟合**：网格/随机搜索 + 样本外验证、Walk-Forward Analysis。
 3. **组合级回测**：当前为单标的逐个回测，扩展到多标的资金分配 / 调仓再平衡。
 4. **风险管理**：用 `indicators.atr` 加止损/止盈、波动率目标仓位。
-5. **实盘对接**：本仓库已接入长桥 (Longbridge) MCP，可用其实时行情触发信号、
-   `submit_order` 下单，把回测验证过的策略接到模拟/实盘。
+5. **实盘对接**：Order Gate 与富途 / 长桥 / 平安适配器已在 `position_agent/`。
+   默认模拟或纸交易；实盘必须显式打开环境变量，且不要在测试里下真单。
 6. **更多数据源**：A 股/港股可接 `akshare`（已在 requirements 注释中预留）。
 
 ---
