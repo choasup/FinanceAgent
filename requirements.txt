@@ -26,3 +26,10 @@ anthropic>=0.60
 # REST API (Next.js 前端的数据后端)
 fastapi>=0.110
 uvicorn>=0.29
+
+# Order Gate 可选券商 SDK。测试、回测、模拟盘和 Gate 演示都不需要。
+# 密钥只放环境变量，不要写进仓库。
+#   pip install futu-api          或  pip install -e ".[futu]"
+#   pip install longbridge        或  pip install -e ".[longbridge]"
+# futu-api
+# longbridge
