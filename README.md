@@ -33,7 +33,9 @@ python scan.py                              # 扫 watchlist, 出榜单 + Markdow
                                             # (crontab 定时示例见 scan.py 头部注释)
 
 # ---- Web 控制台 ----
-streamlit run app.py                        # 交互式网页: Agent分析 + 回测 (部署见 DEPLOY.md)
+streamlit run app.py                        # 交互式网页: Agent分析 + 回测 + 仓位风控
+                                            # 仓位风控: 启动后在左侧「模式」点「仓位风控」
+                                            # (部署见 DEPLOY.md)
 ```
 
 ---
@@ -97,6 +99,7 @@ FinanceAgent/
 ├── position_agent/      # ★ Order Gate + 券商适配器
 │   ├── core.py          #   规则引擎、状态机、OrderGate
 │   ├── bridge.py        #   目标权重 → Intent/Snapshot → Gate
+│   ├── preview.py       #   控制台纸面预览 (复用 Gate, 不重写规则)
 │   └── brokers/         #   Futu / Longbridge / 平安 (默认模拟)
 ├── strategies/          # 内置策略 (加新策略只需在这里加文件)
 │   ├── sma_cross.py     # 双均线交叉 (趋势)
@@ -223,6 +226,17 @@ python -m position_agent --paper-signal --mode advice   # 合成策略权重，�
 `--paper-signal` 用两笔合成目标：AAPL 权重 20% 可通过校验；MSFT 权重 50%
 会被 `MAX_SYMBOL_WEIGHT` 拒绝。`advice` 只校验不下单，`auto` 才把通过的单
 放进本地队列。演示和测试都不会连接 OpenD 或长桥。
+
+在 Web 控制台里看同一条路径：
+
+```bash
+streamlit run app.py
+```
+
+启动后在左侧 **模式** 选择 **仓位风控**。页面只有三块：设定 `advice` / `confirm` /
+`auto` / `kill` 和限额、模拟下单预览（通过或拒绝，以及 `issues.code`）、一键 Kill。
+默认走本地纸面队列。`advice` 只校验不提交；`auto` 只把通过的单放进内存队列；
+Kill 会拒绝当前预览里的全部订单。本页不提供实盘开关。
 
 把模拟盘挂单送进 Gate（仍默认不下单）：
 

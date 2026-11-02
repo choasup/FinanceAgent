@@ -1,6 +1,7 @@
 """FinanceAgent Web 控制台 (Streamlit)。
 
 交互式量化回测: 侧栏选标的/策略/参数, 主区实时出净值曲线、回撤、绩效、成交。
+侧栏还可切到「仓位风控」, 用本地纸面 Order Gate 预览通过/拒绝。
 
 本地运行:
     streamlit run app.py
@@ -287,13 +288,210 @@ def _metric_row(result):
     cols[5].metric("日胜率", f"{m.win_rate:.1%}", help="上涨交易日占比")
 
 
+def _plain_decimal(value: float) -> str:
+    text = f"{value:.4f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _show_gate_rows(rows: list[dict], note: str | None = None) -> None:
+    """展示 Gate 已经算好的结果, 不在页面里重判规则。"""
+    passed = sum(1 for row in rows if row["passed"])
+    rejected = len(rows) - passed
+    left, right = st.columns(2)
+    left.metric("通过", passed)
+    right.metric("拒绝", rejected)
+    frame = pd.DataFrame(
+        [
+            {
+                "结果": "通过" if row["passed"] else "拒绝",
+                "模式": row["mode"],
+                "标的": row["symbol"],
+                "权重": row["weight"],
+                "数量": row["size"],
+                "状态": row["state"],
+                "issues.code": ", ".join(row["codes"]) if row["codes"] else "—",
+            }
+            for row in rows
+        ]
+    )
+    st.dataframe(
+        frame,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"issues.code": st.column_config.TextColumn("issues.code", width="large")},
+    )
+    if note:
+        st.caption(note)
+    elif rows and all((not row["passed"]) and ("KILL_SWITCH" in row["codes"]) for row in rows):
+        st.warning("Kill 已生效：全部拒绝，没有订单进入本地队列。")
+    elif any(row["queued_local"] for row in rows):
+        queued = sum(1 for row in rows if row["queued_local"])
+        held = "被拒绝的单没有入队。" if any(not row["passed"] for row in rows) else ""
+        st.caption(f"{queued} 笔已写入本地 QueueBroker（内存队列，不连接券商）。{held}")
+    elif any(row["mode"] == "advice" and row["passed"] for row in rows):
+        st.caption("advice 只校验，通过的单不会提交到本地队列或券商。")
+    elif any(row["mode"] == "confirm" and row["passed"] for row in rows):
+        st.caption("confirm 停在待确认。本页不代为确认，因此不会入队。")
+    elif any(not row["passed"] for row in rows):
+        st.caption("被拒绝的单不会提交。")
+
+
+def render_position_risk() -> None:
+    """仓位风控页：规则、模拟预览、一键 Kill。只走本地纸面。"""
+    from position_agent.preview import (
+        DEMO_TARGETS,
+        PAPER_EQUITY,
+        PAPER_PRICES,
+        limits_from_values,
+        preview_demo,
+        preview_pingan_unconfigured,
+        preview_targets,
+    )
+
+    st.sidebar.caption("本地纸面队列。本页不连接券商，也不提供实盘开关。")
+    _brand_header(
+        "仓位风控",
+        "用现有 Order Gate 预览一笔模拟单会通过还是拒绝。仅供研究演示，不构成投资建议。",
+    )
+
+    if st.session_state.pop("_pending_kill", False):
+        st.session_state.risk_mode = "kill"
+        st.session_state["_run_kill_preview"] = True
+    if "risk_mode" not in st.session_state:
+        st.session_state.risk_mode = "advice"
+
+    st.subheader("1. 设定规则 / 模式")
+    st.radio(
+        "运行模式",
+        ["advice", "confirm", "auto", "kill"],
+        horizontal=True,
+        key="risk_mode",
+        help="advice 不下单；confirm 待确认；auto 只进本地队列；kill 全部拒绝。",
+    )
+    mode_hint = {
+        "advice": "只做校验。通过后状态为 validated，不提交。",
+        "confirm": "通过后状态为 pending_confirm。本页预览不会自动确认。",
+        "auto": "规则通过后写入本地 QueueBroker。被拒绝的单不入队。",
+        "kill": "不论规则是否通过，全部拒绝，原因码含 KILL_SWITCH。",
+    }[st.session_state.risk_mode]
+    st.caption(mode_hint)
+
+    use_defaults = st.checkbox("使用 Limits 默认限额", value=True)
+    limits = None
+    bad_limits = False
+    if use_defaults:
+        st.caption("默认：单笔最大亏损 100、总敞口 1、单标的权重 0.25、日内亏损上限 500。")
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        max_loss = c1.number_input("单笔最大亏损", min_value=0.01, value=100.0, step=10.0)
+        max_gross = c2.number_input("总敞口上限", min_value=0.01, value=1.0, step=0.05, format="%.2f")
+        max_weight = c3.number_input("单标的权重上限", min_value=0.01, value=0.25, step=0.05, format="%.2f")
+        daily_loss = c4.number_input("日内亏损上限", min_value=0.01, value=500.0, step=50.0)
+        try:
+            limits = limits_from_values(max_loss, max_gross, max_weight, daily_loss)
+        except ValueError as exc:
+            bad_limits = True
+            st.error(f"限额无效：{exc}")
+
+    st.subheader("2. 模拟下单预览")
+    preset = st.radio(
+        "样例",
+        ["compliant", "overweight", "demo", "custom"],
+        index=2,
+        horizontal=True,
+        format_func=lambda key: {
+            "compliant": "合规 AAPL 20%",
+            "overweight": "超限 MSFT 50%",
+            "demo": "内置纸面信号",
+            "custom": "自定义",
+        }[key],
+    )
+    equity = PAPER_EQUITY
+    prices = dict(PAPER_PRICES)
+    if preset == "compliant":
+        targets = {"AAPL": "0.20"}
+        st.caption("净值 10000，AAPL 价格 100，目标权重 0.20。")
+    elif preset == "overweight":
+        targets = {"MSFT": "0.50"}
+        st.caption("净值 10000，MSFT 价格 200，目标权重 0.50。默认单标的上限是 0.25。")
+    elif preset == "demo":
+        targets = dict(DEMO_TARGETS)
+        st.caption("与 demo_paper_signals 相同：AAPL 权重 0.20，MSFT 权重 0.50。")
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        symbol = c1.text_input("标的", value="AAPL").strip().upper()
+        weight = c2.number_input("目标权重", value=0.20, step=0.05, format="%.2f")
+        price = c3.number_input("价格", min_value=0.01, value=100.0, step=1.0, format="%.2f")
+        equity_value = c4.number_input("账户净值", min_value=0.01, value=10000.0, step=1000.0, format="%.2f")
+        targets = {symbol or "AAPL": _plain_decimal(float(weight))}
+        prices = {symbol or "AAPL": _plain_decimal(float(price))}
+        equity = _plain_decimal(float(equity_value))
+
+    def _execute(selected_mode: str) -> list[dict]:
+        if preset == "demo" and limits is None:
+            return preview_demo(selected_mode)
+        return preview_targets(
+            targets,
+            mode=selected_mode,
+            equity=equity,
+            prices=prices,
+            limits=limits,
+        )
+
+    preview_clicked = st.button("预览通过 / 拒绝", type="primary", disabled=bad_limits)
+    run_kill = st.session_state.pop("_run_kill_preview", False)
+    if bad_limits and run_kill:
+        st.error("限额无效，Kill 未执行。")
+        run_kill = False
+    if preview_clicked or run_kill:
+        try:
+            selected = "kill" if run_kill else st.session_state.risk_mode
+            st.session_state["risk_rows"] = _execute(selected)
+            st.session_state["risk_ran"] = True
+        except ValueError as exc:
+            st.session_state["risk_ran"] = False
+            st.error(str(exc))
+
+    if st.session_state.get("risk_ran"):
+        current = st.session_state.get("risk_rows") or []
+        if current:
+            _show_gate_rows(current)
+        else:
+            st.info("目标与当前持仓的差额不足 1 手，Gate 没有生成订单。")
+    else:
+        st.info("选好样例后点 **预览通过 / 拒绝**。合规单应通过；超限单带拒绝码，且不会提交。")
+
+    if st.button("演示平安未配置桥"):
+        try:
+            st.session_state["risk_pingan"] = preview_pingan_unconfigured()
+        except ValueError as exc:
+            st.error(str(exc))
+    pingan_rows = st.session_state.get("risk_pingan")
+    if pingan_rows:
+        st.markdown("**平安适配器（无桥接）**")
+        _show_gate_rows(
+            pingan_rows,
+            note="走适配器提交。没有桥接时拒绝码含 BROKER_NOT_CONFIGURED，不会发出下单请求。",
+        )
+
+    st.subheader("3. 一键 Kill")
+    st.caption("用 kill 模式重跑上面这一笔预览。全部拒绝，原因码含 KILL_SWITCH，不会入队。")
+
+    def _arm_kill() -> None:
+        st.session_state["_pending_kill"] = True
+
+    st.button("拒绝全部", type="primary", on_click=_arm_kill, disabled=bad_limits)
+    if st.session_state.get("_pending_kill"):
+        st.rerun()
+
+
 # ---- 页签 --------------------------------------------------------------------
 
-mode = st.sidebar.radio("模式", ["🤖 Agent 分析", "📈 策略回测"], horizontal=True)
+page = st.sidebar.radio("模式", ["🤖 Agent 分析", "📈 策略回测", "🛡️ 仓位风控"])
 
 # ---- Agent 分析页 -------------------------------------------------------------
 
-if mode == "🤖 Agent 分析":
+if page == "🤖 Agent 分析":
     _brand_header(
         "多因子分析",
         "自动完成: 拉数据 → 技术面体检 → 回测验证信号 → 综合评级。仅供研究, 不构成投资建议。",
@@ -349,6 +547,10 @@ if mode == "🤖 Agent 分析":
                     st.markdown("**风险**")
                     for r in v.risks or ["(无明显风险信号)"]:
                         st.markdown(f"- ⚠️ {r}")
+    st.stop()
+
+if page == "🛡️ 仓位风控":
+    render_position_risk()
     st.stop()
 
 # ---- 回测页: 侧栏参数 ----------------------------------------------------------
